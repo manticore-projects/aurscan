@@ -88,7 +88,7 @@ func injectEditor(argv []string, self string) []string {
 			editor = cand
 		}
 	}
-	return append(argv, "--editor", editor, "--editmenu", "--answeredit", "All")
+	return append(argv, "--editor", editor, "--answeredit", "All")
 }
 
 func fileExists(p string) bool {
