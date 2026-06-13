@@ -1,0 +1,182 @@
+package scan
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+const (
+	apiURL     = "https://api.anthropic.com/v1/messages"
+	llmTimeout = 180 * time.Second
+)
+
+// DefaultModel is the model id used by the direct-API backend.
+func DefaultModel() string {
+	if m := os.Getenv("AURSCAN_MODEL"); m != "" {
+		return m
+	}
+	return "claude-sonnet-4-6"
+}
+
+// Backend describes the resolved LLM backend.
+type Backend struct {
+	Kind string // "claude", "api", or "cmd"
+	Cmd  string // executable path when Kind == "cmd"
+}
+
+// PickBackend auto-detects an available backend, honoring AURSCAN_BACKEND.
+func PickBackend() (Backend, error) {
+	switch b := os.Getenv("AURSCAN_BACKEND"); {
+	case b == "claude" || b == "api":
+		return Backend{Kind: b}, nil
+	case b != "":
+		return Backend{Kind: "cmd", Cmd: b}, nil
+	}
+	if _, err := exec.LookPath("claude"); err == nil {
+		return Backend{Kind: "claude"}, nil
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return Backend{Kind: "api"}, nil
+	}
+	return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude` CLI) and log in, " +
+		"or set ANTHROPIC_API_KEY, or AURSCAN_BACKEND=/path/to/cmd")
+}
+
+func estimateTokens(s string) int { return len(s) / 4 }
+
+// Call sends instructions + content to the selected backend and returns the
+// raw model text plus usage. The Claude Code backend reports exact cost; the
+// API backend reports exact tokens (cost computed from ModelPrice); the custom
+// command backend can only estimate.
+func Call(instructions, content string) (string, Usage, error) {
+	be, err := PickBackend()
+	if err != nil {
+		return "", Usage{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
+	defer cancel()
+	estIn := estimateTokens(instructions + content)
+
+	switch be.Kind {
+	case "claude":
+		return callClaudeCLI(ctx, instructions, content, estIn)
+	case "api":
+		return callAPI(ctx, instructions, content)
+	default:
+		return callCmd(ctx, be.Cmd, instructions, content, estIn)
+	}
+}
+
+func callClaudeCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+	run := func(args ...string) (string, error) {
+		c := exec.CommandContext(ctx, "claude", args...)
+		c.Stdin = strings.NewReader(content)
+		var out, errb bytes.Buffer
+		c.Stdout, c.Stderr = &out, &errb
+		if err := c.Run(); err != nil {
+			return "", fmt.Errorf("claude CLI failed: %s", firstN(errb.String(), 300))
+		}
+		return out.String(), nil
+	}
+	// JSON envelope mode yields exact usage and total_cost_usd.
+	raw, err := run("-p", "--output-format", "json", instructions)
+	if err == nil {
+		var env struct {
+			Result string  `json:"result"`
+			Cost   float64 `json:"total_cost_usd"`
+			Usage  struct {
+				In       int `json:"input_tokens"`
+				Out      int `json:"output_tokens"`
+				CacheCre int `json:"cache_creation_input_tokens"`
+				CacheRd  int `json:"cache_read_input_tokens"`
+			} `json:"usage"`
+		}
+		if jerr := json.Unmarshal([]byte(raw), &env); jerr == nil && env.Result != "" {
+			return env.Result, Usage{
+				In:       env.Usage.In + env.Usage.CacheCre + env.Usage.CacheRd,
+				Out:      env.Usage.Out,
+				CostUSD:  env.Cost,
+				HaveCost: true,
+			}, nil
+		}
+		// Envelope not understood: treat stdout as the model text, estimate.
+		return raw, Usage{In: estIn, Out: estimateTokens(raw), Estimated: true}, nil
+	}
+	// Older CLI without --output-format support: plain print mode.
+	if raw2, err2 := run("-p", instructions); err2 == nil {
+		return raw2, Usage{In: estIn, Out: estimateTokens(raw2), Estimated: true}, nil
+	}
+	return "", Usage{}, err
+}
+
+func callAPI(ctx context.Context, instructions, content string) (string, Usage, error) {
+	model := DefaultModel()
+	body, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"max_tokens": 2000,
+		"system":     instructions,
+		"messages":   []map[string]string{{"role": "user", "content": content}},
+	})
+	req, _ := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := (&http.Client{Timeout: llmTimeout}).Do(req)
+	if err != nil {
+		return "", Usage{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", Usage{}, fmt.Errorf("API HTTP %d: %s", resp.StatusCode, firstN(string(raw), 300))
+	}
+	var out struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage struct {
+			In  int `json:"input_tokens"`
+			Out int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", Usage{}, err
+	}
+	var sb strings.Builder
+	for _, b := range out.Content {
+		sb.WriteString(b.Text)
+	}
+	u := Usage{In: out.Usage.In, Out: out.Usage.Out}
+	if pin, pout, ok := ModelPrice(model); ok {
+		u.CostUSD = float64(u.In)/1e6*pin + float64(u.Out)/1e6*pout
+		u.HaveCost = true
+	}
+	return sb.String(), u, nil
+}
+
+func callCmd(ctx context.Context, cmd, instructions, content string, estIn int) (string, Usage, error) {
+	c := exec.CommandContext(ctx, cmd)
+	c.Stdin = strings.NewReader(instructions + "\n\n" + content)
+	var out, errb bytes.Buffer
+	c.Stdout, c.Stderr = &out, &errb
+	if err := c.Run(); err != nil {
+		return "", Usage{}, fmt.Errorf("backend %s failed: %s", cmd, firstN(errb.String(), 300))
+	}
+	return out.String(), Usage{In: estIn, Out: estimateTokens(out.String()), Estimated: true}, nil
+}
+
+func firstN(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}

