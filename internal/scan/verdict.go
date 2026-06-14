@@ -140,14 +140,19 @@ func CollectDir(dir string) (Files, error) {
 	total := 0
 	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
+			if p != dir && isSkippedBuildDir(filepath.Base(p)) {
+				return filepath.SkipDir
+			}
 			return err
 		}
 		if info.IsDir() {
-			switch info.Name() {
-			case ".git", "src", "pkg":
+			if isSkippedBuildDir(info.Name()) {
 				if p != dir {
 					return filepath.SkipDir
 				}
+			}
+			if p != dir && isGitCheckoutDir(p) {
+				return filepath.SkipDir
 			}
 			return nil
 		}
@@ -170,4 +175,24 @@ func CollectDir(dir string) (Files, error) {
 		return nil, fmt.Errorf("no PKGBUILD found in %s", dir)
 	}
 	return files, nil
+}
+
+func isSkippedBuildDir(name string) bool {
+	switch name {
+	case ".git", "src", "pkg":
+		return true
+	}
+	return false
+}
+
+func isGitCheckoutDir(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return true
+	}
+	for _, name := range []string{"HEAD", "config", "objects", "refs"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return false
+		}
+	}
+	return true
 }

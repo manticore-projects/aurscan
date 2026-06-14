@@ -232,9 +232,10 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 		model = "default-model"
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model":       model,
-		"temperature": 0.1,
-		"max_tokens":  maxOutTokens,
+		"model":           model,
+		"temperature":     0.1,
+		"max_tokens":      maxOutTokens,
+		"response_format": map[string]string{"type": "json_object"},
 		"messages": []map[string]string{
 			{"role": "system", "content": instructions},
 			{"role": "user", "content": content},

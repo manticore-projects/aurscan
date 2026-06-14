@@ -111,9 +111,9 @@ func EditHook(paths []string) {
 	dirs := map[string]bool{}
 	for _, p := range paths {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			dirs[filepath.Dir(p)] = true
+			dirs[packageRoot(filepath.Dir(p))] = true
 		} else if err == nil && fi.IsDir() {
-			dirs[p] = true
+			dirs[packageRoot(p)] = true
 		}
 	}
 	if len(dirs) == 0 {
@@ -141,6 +141,19 @@ func EditHook(paths []string) {
 	}
 	chainToUserEditor(paths)
 	os.Exit(0)
+}
+
+func packageRoot(dir string) string {
+	for {
+		if fileExists(filepath.Join(dir, "PKGBUILD")) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return dir
+		}
+		dir = parent
+	}
 }
 
 // chainToUserEditor opens the user's real editor on the files after a clean
