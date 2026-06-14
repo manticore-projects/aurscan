@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manticore-projects/aurscan/internal/pipeline"
 	"github.com/manticore-projects/aurscan/internal/scan"
 )
 
@@ -44,8 +45,40 @@ func httpGet(u string) ([]byte, int, error) {
 
 // Info is the subset of AUR RPC fields we use.
 type Info struct {
-	Name        string
-	PackageBase string
+	Name           string
+	PackageBase    string
+	Maintainer     string
+	NumVotes       int     `json:"NumVotes"`
+	Popularity     float64 `json:"Popularity"`
+	OutOfDate      int     `json:"OutOfDate"`
+	FirstSubmitted int64   `json:"FirstSubmitted"`
+	LastModified   int64   `json:"LastModified"`
+}
+
+// Reputation renders trusted AUR metadata as prompt context, highlighting the
+// signals that matter most for hijack detection: low votes/popularity, an
+// orphaned (maintainer-less) package, and a last-modified time far newer than
+// first-submission (a proxy for a recent, possibly suspicious change).
+func (i *Info) Reputation() string {
+	if i == nil {
+		return ""
+	}
+	maint := i.Maintainer
+	orphan := ""
+	if maint == "" {
+		maint = "(none)"
+		orphan = "  <-- ORPHANED: no maintainer"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "votes=%d popularity=%.4f maintainer=%s%s\n",
+		i.NumVotes, i.Popularity, maint, orphan)
+	if i.NumVotes < 5 || i.Popularity < 0.5 {
+		sb.WriteString("note: low community usage — treat new remote-fetch/exec with extra suspicion.\n")
+	}
+	if i.OutOfDate != 0 {
+		sb.WriteString("note: flagged out-of-date.\n")
+	}
+	return sb.String()
 }
 
 // Lookup resolves a single package via the AUR RPC v5 info endpoint.
@@ -182,8 +215,10 @@ func ScanRecursive(roots []string, onScan func(pkg string, nfiles int)) []scan.R
 		seen[pkg] = true
 
 		pkgbase := pkg
+		var rep string
 		if info, err := Lookup(pkg); err == nil && info != nil {
 			pkgbase = info.PackageBase
+			rep = info.Reputation()
 		}
 		files, found, err := FetchSnapshot(pkgbase)
 		if err != nil {
@@ -203,7 +238,7 @@ func ScanRecursive(roots []string, onScan func(pkg string, nfiles int)) []scan.R
 		if onScan != nil {
 			onScan(pkg, len(files))
 		}
-		results = append(results, scan.Scan(pkg, files))
+		results = append(results, pipeline.Run(pkg, files, rep))
 		for _, dep := range depsFromSrcinfo(files) {
 			if seen[dep] || PacmanHas(dep) {
 				continue

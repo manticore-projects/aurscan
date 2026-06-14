@@ -36,6 +36,20 @@ bodies, .install scriptlets (post_install/post_upgrade), or sourced helper files
 - sudo/pkexec/setuid manipulation; pacman hooks installed by the package itself.
 - Suspicious mismatch between pkgname/pkgdesc and what the scripts actually do.
 
+REPUTATION & PROVENANCE — weigh these heavily when signals are provided:
+- An unpopular package (few or zero votes, near-zero popularity) that suddenly
+  gains build/install-time network fetches or package-manager calls deserves
+  far more suspicion than a widely-used one.
+- A recent change of maintainer, especially to an account with little history,
+  is the single strongest contextual red flag — it is the exact pattern behind
+  the orphan-adoption hijacks of 2025/2026. Treat new-maintainer + added
+  remote-fetch/exec as MALICIOUS until proven otherwise.
+- Be actively suspicious of changes with no obvious technical reason: a "patch",
+  "fix", or "lockfile" step that does not plausibly serve the package's stated
+  purpose, a new source unrelated to upstream, or build steps that add nothing
+  a normal build needs. Ask "why would a legitimate maintainer do this?" — if
+  there is no good answer, flag it.
+
 Respond with ONLY a single JSON object, no markdown fences, no prose:
 {
   "verdict": "OK" | "SUSPICIOUS" | "MALICIOUS",

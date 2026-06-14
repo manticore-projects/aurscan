@@ -15,7 +15,9 @@
 
 ---
 
-Reading a PKGBUILD yourself only catches attacks you already recognise. **aurscan** reads a package's `PKGBUILD`, `.install` scriptlets, `.SRCINFO` and helper scripts with a Claude model **before `makepkg` executes a single line**, and blocks the build if the script looks malicious.
+Reading a PKGBUILD yourself only catches attacks you already recognise. **aurscan** reads a package's `PKGBUILD`, `.install` scriptlets, `.SRCINFO` and helper scripts **before `makepkg` executes a single line**, and blocks the build if the script looks malicious.
+
+It runs in two stages: **fast deterministic static rules** (offline, zero-cost) catch the known campaign signatures, then a **Claude or local model** — informed by those rule hits and the package's AUR reputation — makes the judgement call on the subtle cases. With no model configured at all, the static rules alone still produce a fail-closed verdict, so you're protected even fully offline.
 
 > [!WARNING]
 > An LLM scanner is a strong **extra layer, not a guarantee**. Keep building in a clean chroot, prefer official-repo packages, and stay wary of freshly-adopted orphaned packages. See [Limitations](#%EF%B8%8F-limitations).
@@ -116,10 +118,26 @@ Auto-detected, in this order — **option 1 needs no API key at all**:
 
 1. **Claude Code CLI** (`claude`) in `PATH` and logged in → uses your existing Claude subscription. Reports **exact cost** per scan.
 2. **`ANTHROPIC_API_KEY`** → direct API (`claude-sonnet-4-6` by default). Reports exact tokens; cost computed from a built-in price table.
-3. **`AURSCAN_BACKEND=/path/to/cmd`** → any local executable that reads the prompt on stdin and prints the reply on stdout. Fully offline.
+3. **Local / self-hosted model** via `AURSCAN_OPENAI_URL` → any OpenAI-compatible `/chat/completions` endpoint (**llama.cpp, Ollama, vLLM, LocalAI**). Fully private; set `AURSCAN_OPENAI_URL_FALLBACK` for automatic failover (e.g. GPU host → local CPU). The model is swappable via `AURSCAN_OPENAI_MODEL`.
+4. **`AURSCAN_BACKEND=/path/to/cmd`** → any executable that reads the prompt on stdin and prints the reply on stdout.
+5. **No backend at all** → static rules still run and block on critical matches.
 
 <details>
-<summary>Getting an API key (option 2)</summary>
+<summary>Local model example (llama.cpp / Ollama)</summary>
+
+```fish
+# llama.cpp server, with a fallback to a second host
+set -Ux AURSCAN_BACKEND openai
+set -Ux AURSCAN_OPENAI_URL http://192.168.0.110:18080/v1/chat/completions
+set -Ux AURSCAN_OPENAI_URL_FALLBACK http://127.0.0.1:18083/v1/chat/completions
+set -Ux AURSCAN_OPENAI_MODEL qwen2.5-coder-32b
+```
+
+Thanks to [@alexzk1](https://github.com/manticore-projects/aurscan/issues/1) for the original connector that this backend generalises.
+</details>
+
+<details>
+<summary>Getting an Anthropic API key (option 2)</summary>
 
 Create one at **console.anthropic.com → Settings → API keys**, add billing, then:
 
@@ -147,6 +165,16 @@ When a package is flagged:
 
 **Exit codes:** `0` clean/approved · `1` suspicious-abort · `2` malicious-abort · `3` operational error.
 
+## 🧩 Customising detection
+
+**Add your own auditor guidance.** Drop a Markdown file at `~/.config/aurscan/instructions.md` (or point `AURSCAN_INSTRUCTIONS` at any path). Its contents are *appended* to the built-in instructions — it can sharpen the auditor but never weakens the core rules or the prompt-injection hardening. A ready-to-copy example lives at [`packaging/instructions.example.md`](packaging/instructions.example.md); it tells the auditor to weight low-popularity packages, recent maintainer changes, and changes with no obvious technical reason far more heavily.
+
+**Static rules run first.** A deterministic catalog (adapted from [KiefStudioMA/ks-aur-scanner](https://github.com/KiefStudioMA/ks-aur-scanner), GPL-3.0, codes kept compatible) matches known patterns — `curl|bash`, reverse shells, credential/browser-profile access, systemd persistence, the `npm install atomic-lockfile` campaign signature, and more — offline and for free. Every hit is fed to the model as prior context. Run them alone with no model call:
+
+```bash
+aurscan --rules-only <pkgname|./dir>     # or set AURSCAN_RULES_ONLY=1
+```
+
 ## 💸 Token & cost reporting
 
 Every scan prints a per-package usage line and a session total:
@@ -168,10 +196,14 @@ Override the API price table (USD per million tokens) so you never depend on a s
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AURSCAN_BACKEND` | auto | `claude` · `api` · `/path/to/cmd` |
+| `AURSCAN_BACKEND` | auto | `claude` · `api` · `openai` · `/path/to/cmd` |
 | `AURSCAN_MODEL` | `claude-sonnet-4-6` | model id for the API backend |
 | `AURSCAN_MAX_PKGS` | `25` | recursion cap for AUR dependency scanning |
 | `AURSCAN_PRICE_IN` / `AURSCAN_PRICE_OUT` | built-in | USD per million tokens |
+| `AURSCAN_OPENAI_URL` / `_FALLBACK` | — | OpenAI-compatible endpoint(s) for a local model |
+| `AURSCAN_OPENAI_MODEL` | `default-model` | model name sent to the local endpoint |
+| `AURSCAN_INSTRUCTIONS` | — | path to extra auditor instructions (appended) |
+| `AURSCAN_RULES_ONLY` | — | `1` = static rules only, never call a model |
 | `NO_COLOR` | — | disable coloured output |
 
 ## 🔒 How it stays safe
@@ -187,6 +219,9 @@ Override the API price table (USD per million tokens) so you never depend on a s
 cmd/aurscan/          entrypoint + argument dispatch
 internal/scan/        prompt, backend calls, verdict parsing, usage/pricing
 internal/aur/         AUR RPC, in-memory snapshot fetch, recursive dep scan
+internal/rules/       deterministic static-rule catalog (offline pre-filter)
+internal/pipeline/    orchestrates rules -> reputation -> LLM, rules-only fallback
+internal/config/      user config + extra-instructions loader
 internal/ui/          colours, verdict printing, interactive gate, report
 internal/yay/         syay wrapper + edit-hook gate
 packaging/PKGBUILD    publish aurscan to the AUR
@@ -202,6 +237,11 @@ testdata/             sanitised firefox-patch-bin fixture (structure only)
 ## 🤝 Contributing
 
 Issues and PRs welcome. `make test` runs `go vet` and the unit tests; CI runs them on every push and, on a `v*` tag, attaches UPX-packed release binaries.
+
+## 🙏 Acknowledgements
+
+- Static-rule catalog adapted from [KiefStudioMA/ks-aur-scanner](https://github.com/KiefStudioMA/ks-aur-scanner) (GPL-3.0).
+- Local-LLM backend generalised from [@alexzk1's connector](https://github.com/manticore-projects/aurscan/issues/1).
 
 ## 📄 License
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/manticore-projects/aurscan/internal/pipeline"
 	"github.com/manticore-projects/aurscan/internal/scan"
 	"github.com/manticore-projects/aurscan/internal/ui"
 )
@@ -131,7 +132,7 @@ func EditHook(paths []string) {
 			continue
 		}
 		ui.Progress(name, len(files))
-		results = append(results, scan.Scan(name, files))
+		results = append(results, pipeline.Run(name, files, ""))
 	}
 
 	if !ui.Gate(results) {

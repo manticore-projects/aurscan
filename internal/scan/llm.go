@@ -33,9 +33,11 @@ type Backend struct {
 }
 
 // PickBackend auto-detects an available backend, honoring AURSCAN_BACKEND.
+// Recognised values: "claude", "api", "openai" (OpenAI-compatible local server
+// such as llama.cpp/Ollama/vLLM), or a path to a custom executable.
 func PickBackend() (Backend, error) {
 	switch b := os.Getenv("AURSCAN_BACKEND"); {
-	case b == "claude" || b == "api":
+	case b == "claude" || b == "api" || b == "openai":
 		return Backend{Kind: b}, nil
 	case b != "":
 		return Backend{Kind: "cmd", Cmd: b}, nil
@@ -46,8 +48,12 @@ func PickBackend() (Backend, error) {
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return Backend{Kind: "api"}, nil
 	}
+	if os.Getenv("AURSCAN_OPENAI_URL") != "" {
+		return Backend{Kind: "openai"}, nil
+	}
 	return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude` CLI) and log in, " +
-		"or set ANTHROPIC_API_KEY, or AURSCAN_BACKEND=/path/to/cmd")
+		"set ANTHROPIC_API_KEY, set AURSCAN_OPENAI_URL for a local model, " +
+		"or AURSCAN_BACKEND=/path/to/cmd")
 }
 
 func estimateTokens(s string) int { return len(s) / 4 }
@@ -70,6 +76,8 @@ func Call(instructions, content string) (string, Usage, error) {
 		return callClaudeCLI(ctx, instructions, content, estIn)
 	case "api":
 		return callAPI(ctx, instructions, content)
+	case "openai":
+		return callOpenAI(ctx, instructions, content, estIn)
 	default:
 		return callCmd(ctx, be.Cmd, instructions, content, estIn)
 	}
@@ -160,6 +168,76 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 		u.HaveCost = true
 	}
 	return sb.String(), u, nil
+}
+
+// callOpenAI talks to an OpenAI-compatible /chat/completions endpoint
+// (llama.cpp, Ollama, vLLM, LocalAI, …). It tries AURSCAN_OPENAI_URL first and
+// AURSCAN_OPENAI_URL_FALLBACK second, so a primary GPU host can fall back to a
+// local CPU instance — generalising the community connector from issue #1.
+// Tokens are taken from the server's usage block when present, else estimated;
+// cost is n/a for local models.
+func callOpenAI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+	urls := []string{os.Getenv("AURSCAN_OPENAI_URL")}
+	if fb := os.Getenv("AURSCAN_OPENAI_URL_FALLBACK"); fb != "" {
+		urls = append(urls, fb)
+	}
+	model := os.Getenv("AURSCAN_OPENAI_MODEL")
+	if model == "" {
+		model = "default-model"
+	}
+	body, _ := json.Marshal(map[string]any{
+		"model":       model,
+		"temperature": 0.1,
+		"messages": []map[string]string{
+			{"role": "system", "content": instructions},
+			{"role": "user", "content": content},
+		},
+	})
+
+	var lastErr error
+	for _, u := range urls {
+		req, _ := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if key := os.Getenv("AURSCAN_OPENAI_API_KEY"); key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		resp, err := (&http.Client{Timeout: llmTimeout}).Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			lastErr = fmt.Errorf("openai HTTP %d: %s", resp.StatusCode, firstN(string(raw), 200))
+			continue
+		}
+		var out struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+			Usage struct {
+				In  int `json:"prompt_tokens"`
+				Out int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
+			lastErr = fmt.Errorf("openai: unparseable response from %s", u)
+			continue
+		}
+		text := out.Choices[0].Message.Content
+		u := Usage{In: out.Usage.In, Out: out.Usage.Out}
+		if u.In == 0 && u.Out == 0 {
+			u = Usage{In: estIn, Out: estimateTokens(text), Estimated: true}
+		}
+		return text, u, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("openai: no AURSCAN_OPENAI_URL configured")
+	}
+	return "", Usage{}, lastErr
 }
 
 func callCmd(ctx context.Context, cmd, instructions, content string, estIn int) (string, Usage, error) {

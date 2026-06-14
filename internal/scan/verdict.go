@@ -48,20 +48,48 @@ func failClosed(why string) Verdict {
 // Files maps a relative filename to its text content.
 type Files map[string]string
 
-// Scan audits a set of package files. Any backend error or unparseable model
-// output yields a SUSPICIOUS verdict — the scanner never fails open.
-func Scan(pkg string, files Files) Result {
-	raw, u, err := Call(Instructions, buildPrompt(pkg, files))
+// Signals carries optional non-file context for a scan: static-rule pre-filter
+// hits (rendered as text) and AUR reputation facts (votes, popularity, recent
+// maintainer change). Empty fields are simply omitted from the prompt.
+type Signals struct {
+	StaticFindings string // pre-formatted static-rule hits
+	Reputation     string // pre-formatted reputation facts
+}
+
+// ExtraInstructions, if set by the caller, is appended to the built-in
+// auditor instructions (never replaces them). Wired from the config package.
+var ExtraInstructions string
+
+// Scan audits a set of package files, optionally informed by static-rule hits
+// and reputation signals. Any backend error or unparseable model output yields
+// a SUSPICIOUS verdict — the scanner never fails open.
+func Scan(pkg string, files Files, sig Signals) Result {
+	instr := Instructions
+	if ExtraInstructions != "" {
+		instr += "\n\n===== ADDITIONAL USER INSTRUCTIONS =====\n" + ExtraInstructions
+	}
+	raw, u, err := Call(instr, buildPrompt(pkg, files, sig))
 	if err != nil {
 		return Result{Pkg: pkg, V: failClosed("Scan failed: " + err.Error())}
 	}
-	return Result{Pkg: pkg, V: parseVerdict(raw), Usage: u}
+	v := parseVerdict(raw)
+	return Result{Pkg: pkg, V: v, Usage: u}
 }
 
-func buildPrompt(pkg string, files Files) string {
+func buildPrompt(pkg string, files Files, sig Signals) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Package under review: %s\n", pkg)
-	sb.WriteString("===== BEGIN UNTRUSTED PACKAGE FILES =====\n")
+	if sig.Reputation != "" {
+		sb.WriteString("\n----- AUR REPUTATION SIGNALS (trusted metadata) -----\n")
+		sb.WriteString(sig.Reputation)
+		sb.WriteString("\n")
+	}
+	if sig.StaticFindings != "" {
+		sb.WriteString("\n----- STATIC PRE-SCAN HITS (trusted, from local rules) -----\n")
+		sb.WriteString(sig.StaticFindings)
+		sb.WriteString("\nConfirm, dismiss as false positives, or extend these with your own analysis.\n")
+	}
+	sb.WriteString("\n===== BEGIN UNTRUSTED PACKAGE FILES =====\n")
 	names := make([]string, 0, len(files))
 	for n := range files {
 		names = append(names, n)

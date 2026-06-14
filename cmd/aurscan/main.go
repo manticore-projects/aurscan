@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 
 	"github.com/manticore-projects/aurscan/internal/aur"
+	"github.com/manticore-projects/aurscan/internal/config"
+	"github.com/manticore-projects/aurscan/internal/pipeline"
 	"github.com/manticore-projects/aurscan/internal/scan"
 	"github.com/manticore-projects/aurscan/internal/ui"
 	"github.com/manticore-projects/aurscan/internal/yay"
@@ -27,10 +29,12 @@ import (
 const usage = `usage:
   aurscan <pkgname|./dir> [...]    scan AUR package(s) / local build dir(s)
   aurscan --update-check           scan pending AUR updates (yay -Qua)
+  aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
   syay <yay args...>               transparent yay wrapper (symlink)`
 
 func main() {
+	scan.ExtraInstructions = config.ExtraInstructions()
 	argv0 := os.Args[0]
 	args := os.Args[1:]
 
@@ -52,6 +56,14 @@ func main() {
 		return
 	}
 
+	if len(args) > 0 && args[0] == "--rules-only" {
+		os.Setenv("AURSCAN_RULES_ONLY", "1")
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		fmt.Println(usage)
+		return
+	}
 	var results []scan.Result
 	switch args[0] {
 	case "--update-check":
@@ -104,7 +116,7 @@ func scanArgs(args []string) []scan.Result {
 				continue
 			}
 			ui.Progress(name, len(files))
-			results = append(results, scan.Scan(name, files))
+			results = append(results, pipeline.Run(name, files, ""))
 		} else {
 			names = append(names, a)
 		}
