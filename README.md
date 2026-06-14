@@ -201,7 +201,27 @@ syay <anything>             # normal yay usage; the scanner gates AUR builds
 aurscan <pkgname> [...]     # standalone scan (fetches the AUR snapshot in memory)
 aurscan ./builddir          # scan a local build directory
 aurscan --update-check      # audit pending AUR updates without installing anything
+aurscan --gen-file          # write pending AUR updates to ./aurscan.paclist
+aurscan --scan-file         # scan packages listed in ./aurscan.paclist
 ```
+
+**Offline admin workflow.** If you maintain machines that do not have an LLM
+backend configured, install aurscan there and run:
+
+```bash
+aurscan --gen-file
+```
+
+That overwrites `./aurscan.paclist` with a structured list of pending AUR
+updates from `yay -Qua`. Copy that single file to your scanner machine and run:
+
+```bash
+aurscan --scan-file
+```
+
+The scan command requires `aurscan.paclist` in the current directory, validates
+that it is an aurscan-generated file, and scans the listed packages through the
+same recursive AUR scanner used by `--update-check`.
 
 When a package is flagged:
 
