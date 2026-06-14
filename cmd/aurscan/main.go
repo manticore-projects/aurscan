@@ -23,6 +23,7 @@ import (
 	"github.com/manticore-projects/aurscan/internal/pipeline"
 	"github.com/manticore-projects/aurscan/internal/scan"
 	"github.com/manticore-projects/aurscan/internal/ui"
+	"github.com/manticore-projects/aurscan/internal/version"
 	"github.com/manticore-projects/aurscan/internal/yay"
 )
 
@@ -31,12 +32,19 @@ const usage = `usage:
   aurscan --update-check           scan pending AUR updates (yay -Qua)
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
+  aurscan --version                print version and exit
   syay <yay args...>               transparent yay wrapper (symlink)`
 
 func main() {
 	scan.ExtraInstructions = config.ExtraInstructions()
 	argv0 := os.Args[0]
 	args := os.Args[1:]
+
+	// --version works regardless of invocation name (syay --version too).
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
+		fmt.Println(version.String())
+		return
+	}
 
 	// Dispatch by how we were invoked.
 	if filepath.Base(argv0) == "syay" {
