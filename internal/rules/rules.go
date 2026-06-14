@@ -79,6 +79,11 @@ var catalog = []Rule{
 	mk("CRYPTO-002", "Cryptominer binary", Critical, `(?i)\b(xmrig|minerd|cpuminer|ethminer)\b`),
 	mk("EXFIL-003", "Chat webhook (C2/exfil)", Critical, `(?i)(discord\.com/api/webhooks|api\.telegram\.org/bot|hooks\.slack\.com)`),
 	mk("ENV-001", "LD_PRELOAD manipulation", Critical, `(?i)\bLD_PRELOAD\b`),
+	// --- Critical: prompt-injection attempts against automated reviewers -----
+	mk("AI-001", "Prompt-injection instruction", Critical, `(?i)\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions|rules|messages|prompts)\b`),
+	mk("AI-002", "Forced benign verdict", Critical, `(?i)\b(verdict|result|classification|assessment)\s*[:=]\s*["']?(OK|SAFE|CLEAN|BENIGN)["']?\b`),
+	mk("AI-003", "Reviewer-directed safety claim", Critical, `(?i)\b(this\s+package\s+is\s+(safe|clean|benign)|mark\s+this\s+(package\s+)?as\s+(safe|clean|benign|ok)|tell\s+the\s+(auditor|reviewer|scanner)\s+this\s+is\s+safe)\b`),
+	mk("AI-004", "System/developer prompt spoofing", Critical, `(?i)\b(system|developer|assistant)\s+(prompt|message|instruction)s?\b|<\|?(system|developer|assistant)\|?>`),
 	// --- Critical: the 2025/2026 AUR campaign signatures --------------------
 	mk("NPM-001", "npm/bun install at build/install", Critical, `(?i)\b(npm|npx|bun|pnpm|yarn)\s+(install|add|x|run|exec)\b`),
 	mk("NPM-002", "Known malicious npm payload", Critical, `(?i)\b(atomic-lockfile|lockfile-js|js-digest)\b`),

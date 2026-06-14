@@ -186,8 +186,9 @@ func callOpenAI(ctx context.Context, instructions, content string, estIn int) (s
 		model = "default-model"
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model":       model,
-		"temperature": 0.1,
+		"model":           model,
+		"temperature":     0.1,
+		"response_format": map[string]string{"type": "json_object"},
 		"messages": []map[string]string{
 			{"role": "system", "content": instructions},
 			{"role": "user", "content": content},
