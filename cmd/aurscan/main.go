@@ -6,6 +6,8 @@
 //
 //	aurscan <pkgname|./dir> [...]   scan AUR package(s) / local build dir(s)
 //	aurscan --update-check          scan pending AUR updates (yay -Qua)
+//	aurscan --gen-file              write pending AUR updates to aurscan.paclist
+//	aurscan --scan-file             scan packages listed in ./aurscan.paclist
 //	aurscan --edit-hook <files...>  $EDITOR-replacement gate for yay
 //	syay <yay args...>              transparent yay wrapper (symlink)
 //	aurscan-edit <files...>         edit-hook (symlink; what syay points yay at)
@@ -30,6 +32,8 @@ import (
 const usage = `usage:
   aurscan <pkgname|./dir> [...]    scan AUR package(s) / local build dir(s)
   aurscan --update-check           scan pending AUR updates (yay -Qua)
+  aurscan --gen-file               write pending AUR updates to ./aurscan.paclist
+  aurscan --scan-file              scan packages listed in ./aurscan.paclist
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
   aurscan --version                print version and exit
@@ -76,6 +80,33 @@ func main() {
 	switch args[0] {
 	case "--update-check":
 		results = updateCheck()
+	case "--gen-file":
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+"--gen-file does not accept arguments")
+			os.Exit(3)
+		}
+		n, err := writePaclistFromYay()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+			os.Exit(3)
+		}
+		fmt.Printf("%s wrote %d pending AUR update(s) to %s\n", ui.Green("OK:"), n, paclistFile)
+		return
+	case "--scan-file":
+		if len(args) != 1 {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+"--scan-file does not accept arguments")
+			os.Exit(3)
+		}
+		names, err := readPaclistPackages()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+			os.Exit(3)
+		}
+		if len(names) == 0 {
+			fmt.Println(ui.Green("No pending AUR updates in ") + paclistFile + ".")
+			return
+		}
+		results = aur.ScanRecursive(names, ui.Progress)
 	default:
 		results = scanArgs(args)
 	}
