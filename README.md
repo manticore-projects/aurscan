@@ -135,7 +135,51 @@ set -Ux AURSCAN_OPENAI_URL_FALLBACK http://127.0.0.1:18083/v1/chat/completions
 set -Ux AURSCAN_OPENAI_MODEL qwen2.5-coder-32b
 ```
 
+On a slow, CPU-only host (e.g. a handheld), the default 180&nbsp;s budget can expire before the model finishes — you'll see `context deadline exceeded`. Raise it and make sure the model's context window is large enough for the prompt (a package is typically several thousand tokens; Ollama's 2048 default will silently truncate it):
+
+```fish
+set -Ux AURSCAN_TIMEOUT 900        # 15 minutes
+# and on the Ollama side, give the model real context, e.g.:
+#   ollama run <model> with a Modelfile setting `PARAMETER num_ctx 8192`
+```
+
 Thanks to [@alexzk1](https://github.com/manticore-projects/aurscan/issues/1) for the original connector that this backend generalises.
+</details>
+
+<details>
+<summary>Choosing a local model — what actually works (and what's too small)</summary>
+
+aurscan asks more of a model than autocomplete or chat does. For each package it must (1) reason about possibly-obfuscated shell across a multi-thousand-token prompt, (2) return **strictly valid JSON** matching the verdict contract, and (3) **not be talked out of a verdict** by injected "this package is safe / ignore previous instructions" text in the untrusted files. Small models fail all three: they rubber-stamp, emit malformed JSON (→ fail-closed `SUSPICIOUS` noise), or fall for the injection. **Parameter count matters more here than it does for coding assistants.**
+
+Rough guidance (names are current as of mid-2026 — check Ollama's library for equivalents, the field moves fast):
+
+| Size | Examples | Verdict for aurscan |
+|---|---|---|
+| ≤ 3B | `qwen2.5-coder:3b`, `llama3.2:3b`, `phi-*-mini` | ❌ **Don't.** Near-random verdicts, unreliable JSON. Use `--rules-only` instead. |
+| 7–8B | `codellama:7b` *(the model in [#8](https://github.com/manticore-projects/aurscan/issues/8))*, `qwen2.5-coder:7b`, `llama3.1:8b` | ⚠️ **Marginal.** Catches only blatant cases; misses subtle supply-chain tricks; JSON sometimes breaks. Independent code-review benchmarks put 7B bug-catch around ~45% — treat it as a weak bonus on top of the static rules, not a real auditor. |
+| 14B | `qwen3:14b`, `phi-4:14b`, `deepseek-r1:14b` | ✅ **Usable minimum.** Reliable JSON, catches most planted issues (~75%). |
+| 32B | `qwen2.5-coder:32b`, `qwen3-coder:32b` | ✅ **Recommended sweet spot.** Strong code-security reasoning (~85–88% in code-review tests), GPT-4o-class on coding, fits a 24&nbsp;GB GPU. |
+| 70B+ / large MoE | `llama3.3:70b`, `qwen3-coder` (MoE), `gpt-oss:120b` | ✅ **Best local.** Approaches cloud quality; 70B-class is the strongest for *security* analysis specifically. |
+
+Approximate VRAM at `Q4_K_M` (incl. KV-cache headroom): **8B ≈ 6&nbsp;GB · 14B ≈ 10&nbsp;GB · 32B ≈ 20–22&nbsp;GB · 70B ≈ 43&nbsp;GB.** A GPU is strongly recommended for 14B and up.
+
+**The two settings people get wrong:**
+
+1. **Context window.** Ollama defaults to `num_ctx 2048`, which silently truncates the package *out of the prompt* — the model then "scans" almost nothing. Set **`num_ctx` ≥ 8192 (16384 recommended)**. Bake it into a model so the OpenAI-compatible endpoint always uses it:
+
+   ```bash
+   printf 'FROM qwen2.5-coder:32b\nPARAMETER num_ctx 16384\n' > Modelfile
+   ollama create aurscan-qwen -f Modelfile
+   ```
+   ```fish
+   set -Ux AURSCAN_BACKEND openai
+   set -Ux AURSCAN_OPENAI_URL http://127.0.0.1:11434/v1/chat/completions
+   set -Ux AURSCAN_OPENAI_MODEL aurscan-qwen
+   ```
+
+2. **Timeout on slow hardware.** CPU-only inference (handhelds, NUCs) runs at a few tokens/sec — a scan can take minutes. Raise the budget: `set -Ux AURSCAN_TIMEOUT 900`. If that's still painful, drop to a 7–14B model or just run `--rules-only`.
+
+You are never left unprotected by a weak model: the deterministic static rules always run, and any model error, timeout, or unparseable output **fails closed to `SUSPICIOUS`**. A package larger than your context window will also exceed most local models — the static rules still cover it.
 </details>
 
 <details>
@@ -204,6 +248,7 @@ Override the API price table (USD per million tokens) so you never depend on a s
 | `AURSCAN_PRICE_IN` / `AURSCAN_PRICE_OUT` | built-in | USD per million tokens |
 | `AURSCAN_OPENAI_URL` / `_FALLBACK` | — | OpenAI-compatible endpoint(s) for a local model |
 | `AURSCAN_OPENAI_MODEL` | `default-model` | model name sent to the local endpoint |
+| `AURSCAN_TIMEOUT` | `180` | per-request budget in **seconds**; raise it for slow CPU-only local models |
 | `AURSCAN_INSTRUCTIONS` | — | path to extra auditor instructions (appended) |
 | `AURSCAN_RULES_ONLY` | — | `1` = static rules only, never call a model |
 | `NO_COLOR` | — | disable coloured output |

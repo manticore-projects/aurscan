@@ -4,19 +4,36 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	apiURL     = "https://api.anthropic.com/v1/messages"
-	llmTimeout = 180 * time.Second
+	apiURL         = "https://api.anthropic.com/v1/messages"
+	defaultTimeout = 180 * time.Second
+	maxOutTokens   = 2000
 )
+
+// llmTimeout is the per-request deadline. It defaults to defaultTimeout but can
+// be raised with AURSCAN_TIMEOUT (whole seconds) — slow CPU-only local backends
+// (e.g. Ollama on a handheld) routinely need more than three minutes to process
+// a large prompt and generate a verdict. A value <= 0 or unparseable falls back
+// to the default.
+func llmTimeout() time.Duration {
+	if s := strings.TrimSpace(os.Getenv("AURSCAN_TIMEOUT")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultTimeout
+}
 
 // DefaultModel is the model id used by the direct-API backend.
 func DefaultModel() string {
@@ -67,20 +84,49 @@ func Call(instructions, content string) (string, Usage, error) {
 	if err != nil {
 		return "", Usage{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
-	defer cancel()
+	to := llmTimeout()
 	estIn := estimateTokens(instructions + content)
 
+	var (
+		text string
+		u    Usage
+	)
 	switch be.Kind {
-	case "claude":
-		return callClaudeCLI(ctx, instructions, content, estIn)
-	case "api":
-		return callAPI(ctx, instructions, content)
 	case "openai":
-		return callOpenAI(ctx, instructions, content, estIn)
+		// Per-attempt deadlines live inside callOpenAI so that a stalled
+		// primary URL does not eat the fallback URL's whole budget.
+		text, u, err = callOpenAI(context.Background(), to, instructions, content, estIn)
 	default:
-		return callCmd(ctx, be.Cmd, instructions, content, estIn)
+		var ctx context.Context
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), to)
+		defer cancel()
+		switch be.Kind {
+		case "claude":
+			text, u, err = callClaudeCLI(ctx, instructions, content, estIn)
+		case "api":
+			text, u, err = callAPI(ctx, instructions, content)
+		default:
+			text, u, err = callCmd(ctx, be.Cmd, instructions, content, estIn)
+		}
 	}
+	if err != nil {
+		return "", Usage{}, annotateTimeout(err, to)
+	}
+	return text, u, nil
+}
+
+// annotateTimeout turns the opaque "context deadline exceeded" into actionable
+// guidance, since for local backends a deadline almost always means the model
+// is simply too slow for the configured budget rather than anything being
+// broken.
+func annotateTimeout(err error, to time.Duration) error {
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") {
+		return fmt.Errorf("model did not respond within %s; raise the budget with "+
+			"AURSCAN_TIMEOUT=<seconds> or switch to a smaller/faster model "+
+			"(underlying: %v)", to, err)
+	}
+	return err
 }
 
 func callClaudeCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
@@ -129,7 +175,7 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 	model := DefaultModel()
 	body, _ := json.Marshal(map[string]any{
 		"model":      model,
-		"max_tokens": 2000,
+		"max_tokens": maxOutTokens,
 		"system":     instructions,
 		"messages":   []map[string]string{{"role": "user", "content": content}},
 	})
@@ -137,7 +183,7 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
 	req.Header.Set("anthropic-version", "2023-06-01")
-	resp, err := (&http.Client{Timeout: llmTimeout}).Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", Usage{}, err
 	}
@@ -174,9 +220,9 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 // (llama.cpp, Ollama, vLLM, LocalAI, …). It tries AURSCAN_OPENAI_URL first and
 // AURSCAN_OPENAI_URL_FALLBACK second, so a primary GPU host can fall back to a
 // local CPU instance — generalising the community connector from issue #1.
-// Tokens are taken from the server's usage block when present, else estimated;
-// cost is n/a for local models.
-func callOpenAI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+// Each URL gets its own full timeout budget. Tokens are taken from the server's
+// usage block when present, else estimated; cost is n/a for local models.
+func callOpenAI(parent context.Context, to time.Duration, instructions, content string, estIn int) (string, Usage, error) {
 	urls := []string{os.Getenv("AURSCAN_OPENAI_URL")}
 	if fb := os.Getenv("AURSCAN_OPENAI_URL_FALLBACK"); fb != "" {
 		urls = append(urls, fb)
@@ -188,6 +234,7 @@ func callOpenAI(ctx context.Context, instructions, content string, estIn int) (s
 	body, _ := json.Marshal(map[string]any{
 		"model":       model,
 		"temperature": 0.1,
+		"max_tokens":  maxOutTokens,
 		"messages": []map[string]string{
 			{"role": "system", "content": instructions},
 			{"role": "user", "content": content},
@@ -196,43 +243,49 @@ func callOpenAI(ctx context.Context, instructions, content string, estIn int) (s
 
 	var lastErr error
 	for _, u := range urls {
-		req, _ := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		if key := os.Getenv("AURSCAN_OPENAI_API_KEY"); key != "" {
-			req.Header.Set("Authorization", "Bearer "+key)
-		}
-		resp, err := (&http.Client{Timeout: llmTimeout}).Do(req)
+		text, usage, err := func() (string, Usage, error) {
+			ctx, cancel := context.WithTimeout(parent, to)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if key := os.Getenv("AURSCAN_OPENAI_API_KEY"); key != "" {
+				req.Header.Set("Authorization", "Bearer "+key)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return "", Usage{}, err
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != 200 {
+				return "", Usage{}, fmt.Errorf("openai HTTP %d: %s", resp.StatusCode, firstN(string(raw), 200))
+			}
+			var out struct {
+				Choices []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				} `json:"choices"`
+				Usage struct {
+					In  int `json:"prompt_tokens"`
+					Out int `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
+				return "", Usage{}, fmt.Errorf("openai: unparseable response from %s", u)
+			}
+			text := out.Choices[0].Message.Content
+			usage := Usage{In: out.Usage.In, Out: out.Usage.Out}
+			if usage.In == 0 && usage.Out == 0 {
+				usage = Usage{In: estIn, Out: estimateTokens(text), Estimated: true}
+			}
+			return text, usage, nil
+		}()
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != 200 {
-			lastErr = fmt.Errorf("openai HTTP %d: %s", resp.StatusCode, firstN(string(raw), 200))
-			continue
-		}
-		var out struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-			Usage struct {
-				In  int `json:"prompt_tokens"`
-				Out int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(raw, &out); err != nil || len(out.Choices) == 0 {
-			lastErr = fmt.Errorf("openai: unparseable response from %s", u)
-			continue
-		}
-		text := out.Choices[0].Message.Content
-		u := Usage{In: out.Usage.In, Out: out.Usage.Out}
-		if u.In == 0 && u.Out == 0 {
-			u = Usage{In: estIn, Out: estimateTokens(text), Estimated: true}
-		}
-		return text, u, nil
+		return text, usage, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("openai: no AURSCAN_OPENAI_URL configured")

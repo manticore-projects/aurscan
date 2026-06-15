@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-15
+
+### Added
+- `AURSCAN_TIMEOUT` (whole seconds) overrides the per-request LLM budget, which
+  was previously a hard-coded 180&nbsp;s. Slow CPU-only local backends (e.g.
+  Ollama on a handheld) routinely need longer to process a large prompt and
+  generate a verdict (#8).
+
+### Changed
+- A request deadline now produces actionable guidance ("model did not respond
+  within Ns; raise AURSCAN_TIMEOUT…") instead of the opaque
+  `context deadline exceeded`.
+- Each OpenAI-compatible URL in a primary/fallback pair gets its own full
+  timeout budget, so a stalled primary no longer starves the fallback.
+- The local-model request now sends `max_tokens`, bounding generation time on
+  local servers the same way the direct-API backend already did.
+
+### Documentation
+- New "Choosing a local model" section (#1): a size-vs-suitability table (why
+  ≤3B is unusable, 7–8B marginal, 14B the usable minimum, 32B the sweet spot,
+  70B+ best), VRAM rules of thumb, and the two settings users most often get
+  wrong — `num_ctx` (Ollama's 2048 default silently truncates the package out
+  of the prompt) and `AURSCAN_TIMEOUT` on slow CPU-only hosts.
+
 ## [0.2.2] - 2026-06-14
 
 ### Changed
