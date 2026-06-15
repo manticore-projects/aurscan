@@ -58,12 +58,14 @@ install_update() {
   echo
   if command -v claude >/dev/null; then
     echo "  Backend: Claude Code CLI found — no API key needed."
+  elif command -v codex >/dev/null; then
+    echo "  Backend: Codex CLI found — no API key needed."
   elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     echo "  Backend: ANTHROPIC_API_KEY is set."
   elif [ -n "${AURSCAN_OPENAI_URL:-}" ]; then
     echo "  Backend: local OpenAI-compatible endpoint ($AURSCAN_OPENAI_URL)."
   else
-    echo "  Backend: none — install Claude Code, set ANTHROPIC_API_KEY, or AURSCAN_OPENAI_URL."
+    echo "  Backend: none — install Claude Code/Codex CLI, set ANTHROPIC_API_KEY, or AURSCAN_OPENAI_URL."
     echo "           (static rules still run with no backend.)"
   fi
   echo

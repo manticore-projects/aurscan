@@ -45,16 +45,16 @@ func DefaultModel() string {
 
 // Backend describes the resolved LLM backend.
 type Backend struct {
-	Kind string // "claude", "api", or "cmd"
+	Kind string // "claude", "codex", "api", "openai", or "cmd"
 	Cmd  string // executable path when Kind == "cmd"
 }
 
 // PickBackend auto-detects an available backend, honoring AURSCAN_BACKEND.
-// Recognised values: "claude", "api", "openai" (OpenAI-compatible local server
-// such as llama.cpp/Ollama/vLLM), or a path to a custom executable.
+// Recognised values: "claude", "codex", "api", "openai" (OpenAI-compatible
+// local server such as llama.cpp/Ollama/vLLM), or a path to a custom executable.
 func PickBackend() (Backend, error) {
 	switch b := os.Getenv("AURSCAN_BACKEND"); {
-	case b == "claude" || b == "api" || b == "openai":
+	case b == "claude" || b == "codex" || b == "api" || b == "openai":
 		return Backend{Kind: b}, nil
 	case b != "":
 		return Backend{Kind: "cmd", Cmd: b}, nil
@@ -62,13 +62,16 @@ func PickBackend() (Backend, error) {
 	if _, err := exec.LookPath("claude"); err == nil {
 		return Backend{Kind: "claude"}, nil
 	}
+	if _, err := exec.LookPath("codex"); err == nil {
+		return Backend{Kind: "codex"}, nil
+	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return Backend{Kind: "api"}, nil
 	}
 	if os.Getenv("AURSCAN_OPENAI_URL") != "" {
 		return Backend{Kind: "openai"}, nil
 	}
-	return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude` CLI) and log in, " +
+	return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude`) or Codex CLI (`codex`) and log in, " +
 		"set ANTHROPIC_API_KEY, set AURSCAN_OPENAI_URL for a local model, " +
 		"or AURSCAN_BACKEND=/path/to/cmd")
 }
@@ -77,8 +80,8 @@ func estimateTokens(s string) int { return len(s) / 4 }
 
 // Call sends instructions + content to the selected backend and returns the
 // raw model text plus usage. The Claude Code backend reports exact cost; the
-// API backend reports exact tokens (cost computed from ModelPrice); the custom
-// command backend can only estimate.
+// API backend reports exact tokens (cost computed from ModelPrice); Codex CLI,
+// OpenAI-compatible, and custom command backends may estimate.
 func Call(instructions, content string) (string, Usage, error) {
 	be, err := PickBackend()
 	if err != nil {
@@ -104,6 +107,8 @@ func Call(instructions, content string) (string, Usage, error) {
 		switch be.Kind {
 		case "claude":
 			text, u, err = callClaudeCLI(ctx, instructions, content, estIn)
+		case "codex":
+			text, u, err = callCodexCLI(ctx, instructions, content, estIn)
 		case "api":
 			text, u, err = callAPI(ctx, instructions, content)
 		default:
@@ -169,6 +174,31 @@ func callClaudeCLI(ctx context.Context, instructions, content string, estIn int)
 		return raw2, Usage{In: estIn, Out: estimateTokens(raw2), Estimated: true}, nil
 	}
 	return "", Usage{}, err
+}
+
+func callCodexCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+	args := []string{
+		"exec",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"--ignore-rules",
+		"--sandbox", "read-only",
+		"--color", "never",
+	}
+	if model := os.Getenv("AURSCAN_CODEX_MODEL"); model != "" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, instructions)
+
+	c := exec.CommandContext(ctx, "codex", args...)
+	c.Stdin = strings.NewReader(content)
+	var out, errb bytes.Buffer
+	c.Stdout, c.Stderr = &out, &errb
+	if err := c.Run(); err != nil {
+		return "", Usage{}, fmt.Errorf("codex CLI failed: %s", firstN(errb.String(), 300))
+	}
+	text := out.String()
+	return text, Usage{In: estIn, Out: estimateTokens(text), Estimated: true}, nil
 }
 
 func callAPI(ctx context.Context, instructions, content string) (string, Usage, error) {
