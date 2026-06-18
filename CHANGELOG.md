@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+ 
+## [0.3.0] - 2026-06-14
+ 
+### Added
+- **paru support.** Integrates via paru's native `PreBuildCommand` hook, which
+  runs once per package before build (covering `-S`, bare interactive search,
+  `-Syu`, AUR dependencies, and cached builds). Two ways to enable:
+  `aurscan --install-paru-hook` (no wrapper; one line in `paru.conf`, undo with
+  `--uninstall-paru-hook`) or the `sparu` wrapper, symmetric with `syay`, which
+  injects an ephemeral `PARU_CONF` that `Include`s the user's real config so it
+  is preserved and never modified.
+- `aurscan --prebuild <dir>` gate entrypoint (non-interactive, fail-closed, no
+  editor chaining) used by the paru hook.
+- `sparu` symlink installed alongside `syay`/`aurscan-edit`.
+### Changed
+- Factored the verdict/usage printer so the interactive gate and the
+  non-interactive `Decide` path share output formatting.
+
 
 ## [0.2.4] - 2026-06-15
 

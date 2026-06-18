@@ -102,6 +102,21 @@ echo "alias yay=syay" >> ~/.bashrc   # or ~/.zshrc
 
 This installs three names that are all the **same static binary**: `aurscan` (CLI), `syay` (the yay wrapper), and `aurscan-edit` (the editor-gate yay invokes).
 
+### paru
+
+paru has a native `PreBuildCommand` hook — cleaner than yay's editor trick — so you have two options:
+
+```bash
+# Option 1 (recommended): no wrapper. One-time setup, then plain `paru` is gated.
+aurscan --install-paru-hook        # adds PreBuildCommand to ~/.config/paru/paru.conf
+#   undo with: aurscan --uninstall-paru-hook
+
+# Option 2: transparent wrapper, symmetric with syay (fish)
+alias paru=sparu
+funcsave paru
+```
+
+Either way the scanner runs once per package in the PKGBUILD directory, after download and before build — covering `-S`, bare interactive search, `-Syu`, and AUR dependencies, and even cached builds. A non-OK verdict makes paru abort. `sparu` injects an ephemeral config (via `PARU_CONF`) that `Include`s your real `paru.conf`, so your own settings are preserved and never modified.
 | Task | Command |
 |---|---|
 | Update | `git pull && ./install.sh` |

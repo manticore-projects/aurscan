@@ -57,11 +57,9 @@ func WorstExit(results []scan.Result) int {
 	return w
 }
 
-// Gate prints every verdict, the accumulated session usage/cost, and — if any
-// package is non-OK — blocks. On a TTY it offers abort / report / override;
-// off a TTY (scripts, the editor hook in a non-interactive yay) it always
-// blocks. Returns true only if it is safe/approved to proceed.
-func Gate(results []scan.Result) bool {
+// summarize prints every verdict plus the session usage line and returns the
+// worst verdict string. Shared by Gate (interactive) and Decide (hook).
+func summarize(results []scan.Result) string {
 	worst := "OK"
 	var session scan.Usage
 	calls := 0
@@ -82,6 +80,29 @@ func Gate(results []scan.Result) bool {
 	if calls > 0 {
 		fmt.Println(Dim(fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String())))
 	}
+	return worst
+}
+
+// Decide prints verdicts and usage, then returns whether it is safe to proceed
+// WITHOUT any interactive prompt. Used by the paru PreBuildCommand hook, whose
+// stdio may not be a usable TTY: any non-OK verdict blocks (fail-closed).
+func Decide(results []scan.Result) bool {
+	worst := summarize(results)
+	if worst == "OK" {
+		fmt.Println(Green("All scanned packages look clean.") +
+			Dim("  (heuristic scan — not a guarantee)"))
+		return true
+	}
+	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), worst)
+	return false
+}
+
+// Gate prints every verdict, the accumulated session usage/cost, and — if any
+// package is non-OK — blocks. On a TTY it offers abort / report / override;
+// off a TTY (scripts, the editor hook in a non-interactive yay) it always
+// blocks. Returns true only if it is safe/approved to proceed.
+func Gate(results []scan.Result) bool {
+	worst := summarize(results)
 
 	if worst == "OK" {
 		fmt.Println(Green("All scanned packages look clean.") +

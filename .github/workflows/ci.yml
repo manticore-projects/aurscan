@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags so `git describe` works
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
@@ -31,17 +33,40 @@ jobs:
         goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags needed for version stamping
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
-      - name: build static binary
+      - name: derive version
+        id: ver
+        run: |
+          VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          COMMIT="$(git rev-parse --short=12 HEAD 2>/dev/null || true)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT"   >> "$GITHUB_OUTPUT"
+          echo "date=$DATE"       >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION ($COMMIT)"
+
+      - name: build static binary (version-stamped)
         env:
           CGO_ENABLED: '0'
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
+          PKG: github.com/manticore-projects/aurscan/internal/version
         run: |
-          go build -trimpath -ldflags="-s -w" -o aurscan-linux-${{ matrix.goarch }} ./cmd/aurscan
+          go build -trimpath \
+            -ldflags="-s -w \
+              -X ${PKG}.Version=${{ steps.ver.outputs.version }} \
+              -X ${PKG}.Commit=${{ steps.ver.outputs.commit }} \
+              -X ${PKG}.Date=${{ steps.ver.outputs.date }}" \
+            -o aurscan-linux-${{ matrix.goarch }} ./cmd/aurscan
+
+      - name: verify version stamp (amd64)
+        if: matrix.goarch == 'amd64'
+        run: ./aurscan-linux-amd64 --version
 
       - name: compress with upx (amd64 only)
         if: matrix.goarch == 'amd64'

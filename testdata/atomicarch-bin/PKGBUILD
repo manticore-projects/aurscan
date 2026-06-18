@@ -1,0 +1,14 @@
+# SANITIZED reproduction of the June 2026 "Atomic Arch" campaign STRUCTURE.
+# Not functional malware: it only mimics the shape the scanner must catch —
+# an orphan-adopted package whose .install hook pulls a rogue JS payload.
+pkgname=somecli-git
+pkgver=1.0.r0
+pkgrel=1
+pkgdesc="A useful CLI tool"
+arch=('x86_64')
+url="https://example.org/somecli"
+source=("git+https://github.com/upstream/somecli.git")
+sha256sums=('SKIP')
+install=somecli.install
+build() { cd "$srcdir/somecli"; make; }
+package() { cd "$srcdir/somecli"; make DESTDIR="$pkgdir" install; }

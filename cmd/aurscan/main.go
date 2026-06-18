@@ -32,8 +32,11 @@ const usage = `usage:
   aurscan --update-check           scan pending AUR updates (yay -Qua)
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
+  aurscan --prebuild <dir>         gate mode (paru PreBuildCommand hook)
+  aurscan --install-paru-hook      enable scanning in paru.conf (no wrapper)
   aurscan --version                print version and exit
-  syay <yay args...>               transparent yay wrapper (symlink)`
+  syay <yay args...>               transparent yay wrapper (symlink)
+  sparu <paru args...>             transparent paru wrapper (symlink)`
 
 func main() {
 	scan.ExtraInstructions = config.ExtraInstructions()
@@ -51,12 +54,43 @@ func main() {
 		yay.Wrapper(args)
 		return
 	}
+	if filepath.Base(argv0) == "sparu" {
+		yay.ParuWrapper(args)
+		return
+	}
 	if yay.IsEditHook(argv0) {
 		yay.EditHook(args)
 		return
 	}
 	if len(args) > 0 && args[0] == "--edit-hook" {
 		yay.EditHook(args[1:])
+		return
+	}
+	if len(args) > 0 && args[0] == "--prebuild" {
+		yay.PrebuildHook(args[1:])
+		return
+	}
+	if len(args) > 0 && args[0] == "--install-paru-hook" {
+		path, err := yay.InstallParuHook()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+			os.Exit(3)
+		}
+		fmt.Println("aurscan paru hook installed in " + path)
+		fmt.Println("Plain `paru` will now scan AUR packages before building.")
+		return
+	}
+	if len(args) > 0 && args[0] == "--uninstall-paru-hook" {
+		path, changed, err := yay.UninstallParuHook()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+			os.Exit(3)
+		}
+		if changed {
+			fmt.Println("Removed aurscan hook from " + path)
+		} else {
+			fmt.Println("No aurscan hook found in paru.conf")
+		}
 		return
 	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {

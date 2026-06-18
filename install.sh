@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 PREFIX="${PREFIX:-/usr/local}"
 BINDIR="$PREFIX/bin"
-NAMES=(aurscan syay aurscan-edit)
+NAMES=(aurscan syay sparu aurscan-edit)
 SUDO="${SUDO-sudo}"
 PKGPATH="github.com/manticore-projects/aurscan/internal/version"
 
@@ -53,6 +53,7 @@ install_update() {
   build
   $SUDO install -Dm755 aurscan "$BINDIR/aurscan"
   $SUDO ln -sf "$BINDIR/aurscan" "$BINDIR/syay"
+  $SUDO ln -sf "$BINDIR/aurscan" "$BINDIR/sparu"
   $SUDO ln -sf "$BINDIR/aurscan" "$BINDIR/aurscan-edit"
   echo "$action $("$BINDIR/aurscan" --version | head -1) -> $BINDIR"
   echo
@@ -67,7 +68,9 @@ install_update() {
     echo "           (static rules still run with no backend.)"
   fi
   echo
-  echo "Enable the scanner (fish):  alias yay=syay; funcsave yay"
+  echo "Enable the scanner:"
+  echo "  yay:  alias yay=syay  (fish: funcsave yay)"
+  echo "  paru: alias paru=sparu, OR run: aurscan --install-paru-hook"
 }
 
 case "${1:-}" in
