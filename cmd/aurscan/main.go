@@ -46,6 +46,7 @@ const usage = `usage:
   sparu <paru args...>             transparent paru wrapper (symlink)`
 
 func main() {
+	config.LoadEnvFile()
 	scan.ExtraInstructions = config.ExtraInstructions()
 	scan.ExtraBackends = scan.BackendsFromConfig(config.LLMConfigs())
 	argv0 := os.Args[0]

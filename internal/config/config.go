@@ -28,6 +28,37 @@ func Dir() string {
 	return ""
 }
 
+// LoadEnvFile reads KEY=VALUE pairs from <config dir>/env and injects them
+// into the process environment. A variable is only set when it is not already
+// present in the environment, so explicit env vars always win. Lines starting
+// with '#' and blank lines are ignored. Call this once at program startup,
+// before reading any other configuration.
+func LoadEnvFile() {
+	d := Dir()
+	if d == "" {
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(d, "env"))
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		if k == "" || os.Getenv(k) != "" {
+			continue
+		}
+		os.Setenv(k, strings.TrimSpace(v))
+	}
+}
+
 // ExtraInstructions loads the user's additional auditor guidance, if any.
 // Resolution order: AURSCAN_INSTRUCTIONS (a file path), then
 // <config dir>/instructions.md. Returns "" when none is present.
