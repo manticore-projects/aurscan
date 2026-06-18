@@ -31,9 +31,11 @@ const usage = `usage:
   aurscan <pkgname|./dir> [...]    scan AUR package(s) / local build dir(s)
   aurscan --update-check           scan pending AUR updates (yay -Qua)
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
+  aurscan --score <file|dir|->     print 0-100 trust score; exit=score, 255=fail
   aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
   aurscan --prebuild <dir>         gate mode (paru PreBuildCommand hook)
   aurscan --install-paru-hook      enable scanning in paru.conf (no wrapper)
+  aurscan --debug ...              trace LLM request/response to stderr
   aurscan --version                print version and exit
   syay <yay args...>               transparent yay wrapper (symlink)
   sparu <paru args...>             transparent paru wrapper (symlink)`
@@ -42,6 +44,9 @@ func main() {
 	scan.ExtraInstructions = config.ExtraInstructions()
 	argv0 := os.Args[0]
 	args := os.Args[1:]
+
+	// --debug may appear anywhere; strip it and enable tracing (issue #17).
+	args = stripDebug(args)
 
 	// --version works regardless of invocation name (syay --version too).
 	if len(args) > 0 && (args[0] == "--version" || args[0] == "-v" || args[0] == "version") {
@@ -96,6 +101,10 @@ func main() {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Println(usage)
 		return
+	}
+
+	if len(args) > 0 && args[0] == "--score" {
+		os.Exit(scoreMode(args[1:]))
 	}
 
 	if len(args) > 0 && args[0] == "--rules-only" {
@@ -169,9 +178,84 @@ func scanArgs(args []string) []scan.Result {
 	return results
 }
 
+// printResultStderr writes a concise verdict + findings to stderr so it does
+// not pollute the score on stdout in --score mode.
+func printResultStderr(r scan.Result) {
+	fmt.Fprintf(os.Stderr, "%s  %s (confidence %.0f%%)\n",
+		r.V.Verdict, r.Pkg, r.V.Confidence)
+	if r.V.Summary != "" {
+		fmt.Fprintf(os.Stderr, "  %s\n", r.V.Summary)
+	}
+	for _, f := range r.V.Findings {
+		fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", f.Severity, f.File, f.Why)
+	}
+}
+
 func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+// stripDebug removes --debug from anywhere in args and enables scan tracing.
+func stripDebug(args []string) []string {
+	out := args[:0:0]
+	for _, a := range args {
+		if a == "--debug" {
+			scan.Debug = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// collectOne resolves a single scan target for script integration (issue #18):
+// "-" reads a PKGBUILD from stdin, a regular file is read directly, a directory
+// is collected as usual. Returns the display name and files.
+func collectOne(target string) (string, scan.Files, error) {
+	switch {
+	case target == "-":
+		f, err := scan.CollectStdin(os.Stdin)
+		return "(stdin)", f, err
+	default:
+		fi, err := os.Stat(target)
+		if err != nil {
+			return target, nil, err
+		}
+		if fi.IsDir() {
+			abs, _ := filepath.Abs(target)
+			f, err := scan.CollectDir(target)
+			return filepath.Base(abs), f, err
+		}
+		f, err := scan.CollectFile(target)
+		return filepath.Base(target), f, err
+	}
+}
+
+// scoreMode scans exactly one target and maps the result to an exit code for
+// scripting (issue #18): the 0-100 trust score on success, or 255 ("-1") if the
+// scan could not be completed. The trust score is also printed to stdout; the
+// human-readable verdict goes to stderr so `score=$(aurscan --score -)` is clean.
+func scoreMode(rest []string) int {
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"--score takes exactly one target (a PKGBUILD file, a dir, or - for stdin)")
+		return 255
+	}
+	name, files, err := collectOne(rest[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+		return 255
+	}
+	res := pipeline.Run(name, files, "")
+	// Show the verdict + findings on stderr (does not pollute the score stdout).
+	printResultStderr(res)
+	if res.Failed {
+		fmt.Fprintln(os.Stderr, ui.Red("scan failed — exit 255"))
+		return 255
+	}
+	score := scan.TrustScore(res.V)
+	fmt.Println(score) // machine-readable: just the number on stdout
+	return score
 }

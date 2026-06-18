@@ -84,6 +84,7 @@ func Call(instructions, content string) (string, Usage, error) {
 	if err != nil {
 		return "", Usage{}, err
 	}
+	dbg("backend=%s cmd=%q", be.Kind, be.Cmd)
 	to := llmTimeout()
 	estIn := estimateTokens(instructions + content)
 
@@ -131,13 +132,17 @@ func annotateTimeout(err error, to time.Duration) error {
 
 func callClaudeCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
 	run := func(args ...string) (string, error) {
+		dbg("claude CLI args=%v", args)
+		dbgBlock("claude stdin (untrusted package content)", content)
 		c := exec.CommandContext(ctx, "claude", args...)
 		c.Stdin = strings.NewReader(content)
 		var out, errb bytes.Buffer
 		c.Stdout, c.Stderr = &out, &errb
 		if err := c.Run(); err != nil {
+			dbgBlock("claude stderr", errb.String())
 			return "", fmt.Errorf("claude CLI failed: %s", firstN(errb.String(), 300))
 		}
+		dbgBlock("claude raw stdout", out.String())
 		return out.String(), nil
 	}
 	// JSON envelope mode yields exact usage and total_cost_usd.
@@ -162,6 +167,7 @@ func callClaudeCLI(ctx context.Context, instructions, content string, estIn int)
 			}, nil
 		}
 		// Envelope not understood: treat stdout as the model text, estimate.
+		dbg("claude --output-format json envelope not understood; using raw stdout as model text (issue #17 territory)")
 		return raw, Usage{In: estIn, Out: estimateTokens(raw), Estimated: true}, nil
 	}
 	// Older CLI without --output-format support: plain print mode.
@@ -179,16 +185,20 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 		"system":     instructions,
 		"messages":   []map[string]string{{"role": "user", "content": content}},
 	})
+	dbgBlock("anthropic API request body", string(body))
 	req, _ := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
 	req.Header.Set("anthropic-version", "2023-06-01")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		dbg("anthropic API transport error: %v", err)
 		return "", Usage{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	dbg("anthropic API HTTP %d", resp.StatusCode)
+	dbgBlock("anthropic API raw response", string(raw))
 	if resp.StatusCode != 200 {
 		return "", Usage{}, fmt.Errorf("API HTTP %d: %s", resp.StatusCode, firstN(string(raw), 300))
 	}
@@ -241,8 +251,10 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 		},
 	})
 
+	dbgBlock("openai request body", string(body))
 	var lastErr error
 	for _, u := range urls {
+		dbg("openai POST %s", u)
 		text, usage, err := func() (string, Usage, error) {
 			ctx, cancel := context.WithTimeout(parent, to)
 			defer cancel()
@@ -257,6 +269,8 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 			}
 			raw, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			dbg("openai %s HTTP %d", u, resp.StatusCode)
+			dbgBlock("openai raw response", string(raw))
 			if resp.StatusCode != 200 {
 				return "", Usage{}, fmt.Errorf("openai HTTP %d: %s", resp.StatusCode, firstN(string(raw), 200))
 			}
@@ -294,13 +308,18 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 }
 
 func callCmd(ctx context.Context, cmd, instructions, content string, estIn int) (string, Usage, error) {
+	payload := instructions + "\n\n" + content
+	dbg("cmd backend: %s", cmd)
+	dbgBlock("cmd stdin", payload)
 	c := exec.CommandContext(ctx, cmd)
-	c.Stdin = strings.NewReader(instructions + "\n\n" + content)
+	c.Stdin = strings.NewReader(payload)
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
 	if err := c.Run(); err != nil {
+		dbgBlock("cmd stderr", errb.String())
 		return "", Usage{}, fmt.Errorf("backend %s failed: %s", cmd, firstN(errb.String(), 300))
 	}
+	dbgBlock("cmd raw stdout", out.String())
 	return out.String(), Usage{In: estIn, Out: estimateTokens(out.String()), Estimated: true}, nil
 }
 

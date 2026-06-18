@@ -10,8 +10,10 @@ import (
 	"github.com/manticore-projects/aurscan/internal/scan"
 )
 
-// MailingList is where the July 2025 CHAOS RAT cleanup was coordinated.
-const MailingList = "aur-general@lists.archlinux.org"
+// ReportTo is the aurscan aggregation address. Reports are collected here and
+// triaged before any upstream disclosure; the Arch aur-general list is not a
+// suitable destination for automated LLM-assisted reports.
+const ReportTo = "aurscan@manticore-projects.com"
 
 const pkgURLFmt = "https://aur.archlinux.org/packages/%s"
 
@@ -41,13 +43,13 @@ func offerReport(r scan.Result, prompt func(string) string) {
 	subject := "[SECURITY] Possibly malicious AUR package: " + r.Pkg
 	fmt.Println()
 	fmt.Println(Bold("Report drafted: ") + path)
-	fmt.Printf("  1. Review it, then email it to %s\n", Bold(MailingList))
+	fmt.Printf("  1. Review it, then email it to %s\n", Bold(ReportTo))
 	fmt.Println("  2. Also file a deletion request on the AUR web page:")
 	fmt.Printf("     "+pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'\n", r.Pkg)
 	if _, err := exec.LookPath("xdg-email"); err == nil && prompt != nil {
 		if strings.ToLower(strings.TrimSpace(prompt("  Open your mail client now? [y/N] "))) == "y" {
 			body, _ := os.ReadFile(path)
-			_ = exec.Command("xdg-email", "--subject", subject, "--body", string(body), MailingList).Start()
+			_ = exec.Command("xdg-email", "--subject", subject, "--body", string(body), ReportTo).Start()
 		}
 	}
 }

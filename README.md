@@ -221,7 +221,7 @@ aurscan --update-check      # audit pending AUR updates without installing anyth
 When a package is flagged:
 
 - **Abort** — the default; pressing <kbd>Enter</kbd> is always safe.
-- **Report** — drafts `/tmp/aurscan-report-<pkg>.txt`, offers to open your mail client to [`aur-general@lists.archlinux.org`](https://lists.archlinux.org/mailman3/lists/aur-general.lists.archlinux.org/) (where the CHAOS RAT cleanup was coordinated), and reminds you to file an AUR deletion request. **Never sends automatically.**
+- **Report** — drafts `/tmp/aurscan-report-<pkg>.txt` and offers to open your mail client to [`aurscan@manticore-projects.com`](mailto:aurscan@manticore-projects.com), where reports are aggregated and triaged before any upstream disclosure, and reminds you to file an AUR deletion request. **Never sends automatically.**
 - **Continue** — requires typing `INSTALL`, so nothing slips through by reflex.
 
 **Exit codes:** `0` clean/approved · `1` suspicious-abort · `2` malicious-abort · `3` operational error.
@@ -234,6 +234,38 @@ When a package is flagged:
 
 ```bash
 aurscan --rules-only <pkgname|./dir>     # or set AURSCAN_RULES_ONLY=1
+```
+
+## 🔌 Script integration
+
+For CI or custom hooks, `--score` scans a single target and maps the result to
+an exit code: the **0-100 trust score** on success (higher = safer; MALICIOUS
+0-33, SUSPICIOUS 34-66, OK 67-100), or **255** if the scan could not be
+completed. The score is also printed to stdout; the human-readable verdict goes
+to stderr, so it is clean to capture:
+
+```bash
+aurscan --score ./PKGBUILD        # exit code = trust score
+aurscan --score ./builddir        # a directory works too
+makepkg --printsrcinfo >/dev/null; cat PKGBUILD | aurscan --score -   # from stdin
+
+score=$(aurscan --score - < PKGBUILD)   # capture just the number
+[ "$score" -ge 67 ] || echo "risky (score $score)"
+```
+
+Note: exit `0` means trust score 0 (most dangerous), so test the numeric value
+rather than relying on `&&`/`||`.
+
+## 🐞 Debugging LLM communication
+
+If a scan returns "malformed JSON" or you want to see exactly what was sent to
+and returned from the model, add `--debug` (anywhere on the command line). It
+traces, to stderr, the selected backend, the full request payload, the raw
+response, and the reason any parse failed:
+
+```bash
+aurscan --debug rocketchat-desktop
+aurscan --debug --score ./PKGBUILD
 ```
 
 ## 💸 Token & cost reporting

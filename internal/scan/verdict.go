@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,10 +36,14 @@ type Verdict struct {
 var Rank = map[string]int{"OK": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}
 
 // Result pairs a package name with its verdict and the usage it cost.
+// Failed is true when the scan could not be completed (backend/comms error or
+// unparseable output) rather than reflecting a genuine model judgement; callers
+// that map results to exit codes use it to distinguish failure from a low score.
 type Result struct {
-	Pkg   string
-	V     Verdict
-	Usage Usage
+	Pkg    string
+	V      Verdict
+	Usage  Usage
+	Failed bool
 }
 
 func failClosed(why string) Verdict {
@@ -70,10 +75,13 @@ func Scan(pkg string, files Files, sig Signals) Result {
 	}
 	raw, u, err := Call(instr, buildPrompt(pkg, files, sig))
 	if err != nil {
-		return Result{Pkg: pkg, V: failClosed("Scan failed: " + err.Error())}
+		dbg("scan %s: backend error: %v", pkg, err)
+		return Result{Pkg: pkg, V: failClosed("Scan failed: " + err.Error()), Failed: true}
 	}
+	dbg("scan %s: raw model text (%d bytes):\n%s", pkg, len(raw), raw)
 	v := parseVerdict(raw)
-	return Result{Pkg: pkg, V: v, Usage: u}
+	failed := v.Confidence == 0 && strings.Contains(v.Summary, "fail-closed")
+	return Result{Pkg: pkg, V: v, Usage: u, Failed: failed}
 }
 
 func buildPrompt(pkg string, files Files, sig Signals) string {
@@ -107,13 +115,17 @@ var jsonBlobRe = regexp.MustCompile(`(?s)\{.*\}`)
 func parseVerdict(raw string) Verdict {
 	blob := jsonBlobRe.FindString(raw)
 	if blob == "" {
+		dbg("parseVerdict: no JSON object found in model output (issue #17)")
 		return failClosed("Scanner returned no parseable result")
 	}
+	dbgBlock("parseVerdict: extracted JSON blob", blob)
 	var v Verdict
 	if err := json.Unmarshal([]byte(blob), &v); err != nil {
+		dbg("parseVerdict: json.Unmarshal failed: %v (issue #17)", err)
 		return failClosed("Scanner returned malformed JSON")
 	}
 	if _, ok := Rank[v.Verdict]; !ok {
+		dbg("parseVerdict: unknown verdict %q, downgrading to SUSPICIOUS", v.Verdict)
 		v.Verdict = "SUSPICIOUS"
 	}
 	return v
@@ -170,4 +182,60 @@ func CollectDir(dir string) (Files, error) {
 		return nil, fmt.Errorf("no PKGBUILD found in %s", dir)
 	}
 	return files, nil
+}
+
+// CollectFile reads a single PKGBUILD file directly (issue #18). The content is
+// keyed as "PKGBUILD" so the auditor and static rules treat it as one.
+func CollectFile(path string) (Files, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileBytes {
+		data = data[:maxFileBytes]
+	}
+	if !isTexty(data) {
+		return nil, fmt.Errorf("%s is not a text file", path)
+	}
+	return Files{"PKGBUILD": string(data)}, nil
+}
+
+// CollectStdin reads a PKGBUILD from r (stdin) for scripting (issue #18).
+func CollectStdin(r io.Reader) (Files, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxFileBytes))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no PKGBUILD content on stdin")
+	}
+	if !isTexty(data) {
+		return nil, fmt.Errorf("stdin is not text")
+	}
+	return Files{"PKGBUILD": string(data)}, nil
+}
+
+// TrustScore maps a verdict to a 0-100 trust score for script integration
+// (issue #18). The bands encode the verdict and the within-band position
+// reflects confidence: MALICIOUS 0-33, SUSPICIOUS 34-66, OK 67-100. Higher is
+// safer. Operational failures are represented separately (exit 255), not here.
+func TrustScore(v Verdict) int {
+	c := v.Confidence
+	if c < 0 {
+		c = 0
+	}
+	if c > 100 {
+		c = 100
+	}
+	round := func(f float64) int { return int(f + 0.5) }
+	switch v.Verdict {
+	case "OK":
+		return 67 + round(c*33.0/100.0)
+	case "SUSPICIOUS":
+		return 34 + round((100.0-c)*32.0/100.0)
+	case "MALICIOUS":
+		return round((100.0 - c) * 33.0 / 100.0)
+	default:
+		return 0
+	}
 }

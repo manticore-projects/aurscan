@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-06-18
+
+### Added
+- **`--score` for script integration (#18).** Scans a single target and exits
+  with a 0-100 trust score (MALICIOUS 0-33, SUSPICIOUS 34-66, OK 67-100; higher
+  is safer), or 255 if the scan could not be completed. The score is printed to
+  stdout and the verdict to stderr for clean capture.
+- **Single PKGBUILD by filename or STDIN (#18).** `--score` (and the scanner
+  generally) accept a regular file path or `-` to read a PKGBUILD from stdin,
+  in addition to directories.
+- **`--debug` LLM tracing (#17).** Prints the selected backend, the request
+  payload sent to the model, the raw response, and the reason any JSON parse
+  failed — diagnosing the "malformed JSON" case reported on the Claude
+  subscription backend.
+
+### Changed
+- In-app security reports now draft to `aurscan@manticore-projects.com` for
+  aggregation/triage instead of the Arch aur-general list. Still never sent
+  automatically.
+- `scan.Result` gained a `Failed` flag distinguishing an operational failure
+  (backend/comms error, unparseable output) from a genuine low-trust verdict.
  
 ## [0.3.0] - 2026-06-14
  
