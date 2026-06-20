@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **paru interactive build decision now works (#3).** The `--prebuild` hook
+  prompts over `/dev/tty`, so you can abort or override a flagged package even
+  though paru runs `PreBuildCommand` with redirected stdio. With no controlling
+  terminal (CI) it fails closed as before. (reported by Xaero252)
+- **`--install-paru-hook` no longer shadows a system config (#3).** It now
+  writes to the user config and, when creating a fresh one while `/etc/paru.conf`
+  exists, `Include`s the system file first so existing settings are preserved.
+  Install/uninstall consistently target the user config and never need root.
+  (reported by rynti)
+
+
 
 ## [0.4.1] - 2026-06-18
 

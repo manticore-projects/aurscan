@@ -3,6 +3,7 @@ package ui
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -101,6 +102,54 @@ func Decide(results []scan.Result) bool {
 // package is non-OK — blocks. On a TTY it offers abort / report / override;
 // off a TTY (scripts, the editor hook in a non-interactive yay) it always
 // blocks. Returns true only if it is safe/approved to proceed.
+// GateVia is Gate's interactive core operating over an explicit reader/writer
+// rather than os.Stdin/os.Stdout. The paru PreBuildCommand hook uses it with
+// /dev/tty so the user can still decide interactively even though paru runs the
+// hook with redirected stdio. Returns true only if the user approves the build.
+func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
+	var flagged []scan.Result
+	worst := "OK"
+	for _, r := range results {
+		if r.V.Verdict != "OK" {
+			flagged = append(flagged, r)
+		}
+		if scan.Rank[r.V.Verdict] > scan.Rank[worst] {
+			worst = r.V.Verdict
+		}
+	}
+	for _, r := range results {
+		fmt.Fprintf(out, "%s %s (confidence %.0f%%)\n", r.V.Verdict, r.Pkg, r.V.Confidence)
+		if r.V.Summary != "" {
+			fmt.Fprintf(out, "  %s\n", r.V.Summary)
+		}
+		for _, f := range r.V.Findings {
+			fmt.Fprintf(out, "  [%s] %s: %s\n", f.Severity, f.File, f.Why)
+		}
+	}
+	if worst == "OK" {
+		return true
+	}
+	fmt.Fprintf(out, "%s%d package(s) flagged %s.\n",
+		"!! Build blocked: ", len(flagged), worst)
+
+	br := bufio.NewReader(in)
+	ask := func(p string) string {
+		fmt.Fprint(out, p)
+		line, _ := br.ReadString('\n')
+		return strings.TrimSpace(strings.ToLower(line))
+	}
+	for {
+		switch ask("  [A]bort (default) / [c]ontinue anyway: ") {
+		case "", "a":
+			return false
+		case "c":
+			fmt.Fprint(out, "  Type the word INSTALL to override the scanner: ")
+			confirm, _ := br.ReadString('\n')
+			return strings.TrimSpace(confirm) == "INSTALL"
+		}
+	}
+}
+
 func Gate(results []scan.Result) bool {
 	worst := summarize(results)
 

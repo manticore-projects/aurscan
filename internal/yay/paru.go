@@ -23,6 +23,10 @@ import (
 
 const hookMarker = "# added by aurscan"
 
+// systemParuConf is the system-wide paru config we Include when creating a
+// fresh user config, so its settings are not shadowed. Overridable in tests.
+var systemParuConf = "/etc/paru.conf"
+
 func prebuildLine() string {
 	self, _ := os.Executable()
 	if self == "" {
@@ -93,38 +97,70 @@ func ParuWrapper(argv []string) {
 	}
 }
 
-// InstallParuHook appends the PreBuildCommand to the user's paru.conf so plain
-// `paru` is gated, without a wrapper. Idempotent: it does nothing if an aurscan
-// hook line is already present. Returns the path written.
+// userParuConf returns the per-user paru.conf path we install the hook into
+// (XDG_CONFIG_HOME/paru/paru.conf, else ~/.config/paru/paru.conf). This is
+// always writable without root and is the file paru prefers over /etc.
+func userParuConf() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "paru", "paru.conf")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "paru", "paru.conf")
+	}
+	return ""
+}
+
+// InstallParuHook enables scanning by adding the PreBuildCommand to paru's
+// config, without a wrapper. It always targets the user config
+// (~/.config/paru/paru.conf or $XDG_CONFIG_HOME/paru/paru.conf) so it never
+// needs root. Crucially, paru reads only the FIRST config it finds: if a
+// system /etc/paru.conf exists and we are creating a new user config, we
+// `Include` the system file first so the user's existing settings are not
+// silently shadowed (issue #3, rynti). Idempotent: a second run is a no-op.
+// Returns the path written.
 func InstallParuHook() (string, error) {
-	path := realParuConf()
-	if path == "" {
-		// default to the user config location and create it
-		home, err := os.UserHomeDir()
+	userConf := userParuConf()
+	if userConf == "" {
+		return "", fmt.Errorf("cannot determine user config dir")
+	}
+
+	// Already installed?
+	if data, err := os.ReadFile(userConf); err == nil && strings.Contains(string(data), hookMarker) {
+		return userConf, nil
+	}
+
+	if fileExists(userConf) {
+		// Append in place; the user's settings are preserved untouched.
+		f, err := os.OpenFile(userConf, os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			return "", err
 		}
-		path = filepath.Join(home, ".config", "paru", "paru.conf")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return "", err
-		}
+		defer f.Close()
+		fmt.Fprintf(f, "\n[bin]\n%s\n%s\n", hookMarker, prebuildLine())
+		return userConf, nil
 	}
-	if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), hookMarker) {
-		return path, nil // already installed
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
+
+	// No user config yet. Create one, but if a system config exists, Include it
+	// first so paru still honours those settings (it reads only one file).
+	if err := os.MkdirAll(filepath.Dir(userConf), 0o755); err != nil {
 		return "", err
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "\n[bin]\n%s\n%s\n", hookMarker, prebuildLine())
-	return path, nil
+	var b strings.Builder
+	b.WriteString(hookMarker + "\n")
+	if fileExists(systemParuConf) {
+		fmt.Fprintf(&b, "[options]\nInclude = %s\n", systemParuConf)
+	}
+	b.WriteString("[bin]\n" + prebuildLine() + "\n")
+	if err := os.WriteFile(userConf, []byte(b.String()), 0o644); err != nil {
+		return "", err
+	}
+	return userConf, nil
 }
 
 // UninstallParuHook removes aurscan's lines from paru.conf. Returns true if it
 // changed anything.
 func UninstallParuHook() (string, bool, error) {
-	path := realParuConf()
+	path := userParuConf()
 	if path == "" {
 		return "", false, nil
 	}
@@ -150,9 +186,12 @@ func UninstallParuHook() (string, bool, error) {
 }
 
 // PrebuildHook is the `aurscan --prebuild <dir>` entrypoint paru invokes via
-// PreBuildCommand. It scans the directory and exits non-zero on any non-OK
-// verdict, which aborts paru's build. Unlike the yay edit-hook it never chains
-// to an editor.
+// PreBuildCommand. It scans the directory and, on a non-OK verdict, lets the
+// user decide interactively. Because paru runs PreBuildCommand with redirected
+// stdio, the prompt is done over /dev/tty (the controlling terminal) rather
+// than stdin/stdout — this is what makes the interactive build decision work
+// under paru (issue #3). With no controlling terminal (CI, non-interactive),
+// it fails closed: any non-OK verdict aborts the build via a non-zero exit.
 func PrebuildHook(args []string) {
 	dir := "."
 	if len(args) > 0 {
@@ -167,8 +206,25 @@ func PrebuildHook(args []string) {
 	}
 	ui.Progress(name, len(files))
 	res := pipeline.Run(name, files, "")
-	if ui.Decide([]scan.Result{res}) {
+	results := []scan.Result{res}
+
+	if res.V.Verdict == "OK" {
+		ui.Decide(results) // prints the clean line
 		os.Exit(0)
 	}
-	os.Exit(maxInt(1, ui.WorstExit([]scan.Result{res})))
+
+	// Non-OK: try to prompt on the controlling terminal.
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		defer tty.Close()
+		if ui.GateVia(results, tty, tty) {
+			fmt.Fprintln(tty, "Proceeding at your request — be careful.")
+			os.Exit(0)
+		}
+		fmt.Fprintln(tty, "Build aborted by aurscan.")
+		os.Exit(maxInt(1, ui.WorstExit(results)))
+	}
+
+	// No controlling terminal: fail closed.
+	ui.Decide(results)
+	os.Exit(maxInt(1, ui.WorstExit(results)))
 }
