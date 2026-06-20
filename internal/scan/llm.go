@@ -78,6 +78,17 @@ func PickBackend() (Backend, error) {
 
 func estimateTokens(s string) int { return len(s) / 4 }
 
+// openAIKey resolves the bearer token for the OpenAI-compatible backend. It
+// prefers AURSCAN_OPENAI_API_KEY, then falls back to the conventional
+// OPENAI_API_KEY that local proxies like LiteLLM, vLLM and Ollama already use
+// (issue #13). Empty means no Authorization header is sent (open local server).
+func openAIKey() string {
+	if k := os.Getenv("AURSCAN_OPENAI_API_KEY"); k != "" {
+		return k
+	}
+	return os.Getenv("OPENAI_API_KEY")
+}
+
 // Call sends instructions + content to the selected backend and returns the
 // raw model text plus usage. The Claude Code backend reports exact cost; the
 // API backend reports exact tokens (cost computed from ModelPrice); Codex CLI,
@@ -325,6 +336,7 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 	if model == "" {
 		model = "default-model"
 	}
+	apiKey := openAIKey()
 	body, _ := json.Marshal(map[string]any{
 		"model":           model,
 		"temperature":     0.1,
@@ -345,8 +357,8 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
-			if key := os.Getenv("AURSCAN_OPENAI_API_KEY"); key != "" {
-				req.Header.Set("Authorization", "Bearer "+key)
+			if apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
 			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
