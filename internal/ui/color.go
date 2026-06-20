@@ -35,3 +35,22 @@ func IsTTY(f *os.File) bool {
 		syscall.TCGETS, uintptr(unsafe.Pointer(&t)), 0, 0, 0)
 	return errno == 0
 }
+
+// tcflsh is the Linux TCFLSH ioctl; tciflush selects the input queue.
+const (
+	tcflsh   = 0x540B
+	tciflush = 0x0
+)
+
+// DrainInput discards any keystrokes already buffered on f's terminal input
+// queue. It is called immediately before a security prompt so that input typed
+// earlier — e.g. ENTER mashed through yay/paru's own prompts while the scan was
+// still running — cannot pre-answer aurscan's confirmation. This mirrors the
+// input-flush that sudo performs before reading a password. No-op when f is not
+// a terminal.
+func DrainInput(f *os.File) {
+	if f == nil || !IsTTY(f) {
+		return
+	}
+	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(tcflsh), uintptr(tciflush))
+}

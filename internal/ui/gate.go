@@ -133,7 +133,9 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
 		"!! Build blocked: ", len(flagged), worst)
 
 	br := bufio.NewReader(in)
+	tty, _ := in.(*os.File) // for input flushing when reading from /dev/tty
 	ask := func(p string) string {
+		DrainInput(tty) // discard keystrokes buffered before this prompt
 		fmt.Fprint(out, p)
 		line, _ := br.ReadString('\n')
 		return strings.TrimSpace(strings.ToLower(line))
@@ -143,6 +145,7 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
 		case "", "a":
 			return false
 		case "c":
+			DrainInput(tty)
 			fmt.Fprint(out, "  Type the word INSTALL to override the scanner: ")
 			confirm, _ := br.ReadString('\n')
 			return strings.TrimSpace(confirm) == "INSTALL"
@@ -173,6 +176,7 @@ func Gate(results []scan.Result) bool {
 	}
 	in := bufio.NewReader(os.Stdin)
 	ask := func(p string) string {
+		DrainInput(os.Stdin) // discard keystrokes buffered before this prompt
 		fmt.Print(p)
 		line, _ := in.ReadString('\n')
 		return line
