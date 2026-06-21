@@ -86,3 +86,38 @@ func TestHookLuaContainsPrebuild(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectWrapperAlias(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	// nothing set yet
+	if p, found := DetectWrapperAlias("yay", "syay"); found {
+		t.Fatalf("unexpected match at %s", p)
+	}
+
+	// fish funcsave style: ~/.config/fish/functions/yay.fish referencing syay
+	fishFn := filepath.Join(home, ".config", "fish", "functions", "yay.fish")
+	os.MkdirAll(filepath.Dir(fishFn), 0o755)
+	os.WriteFile(fishFn, []byte("function yay\n    syay $argv\nend\n"), 0o644)
+	if p, found := DetectWrapperAlias("yay", "syay"); !found {
+		t.Fatal("expected fish function match")
+	} else if p != fishFn {
+		t.Fatalf("matched %s, want %s", p, fishFn)
+	}
+
+	// bashrc style for paru
+	bashrc := filepath.Join(home, ".bashrc")
+	os.WriteFile(bashrc, []byte("alias paru=sparu\n"), 0o644)
+	if _, found := DetectWrapperAlias("paru", "sparu"); !found {
+		t.Fatal("expected bashrc alias match")
+	}
+
+	// must not false-match a substring (e.g. 'syayly') — word-boundary check
+	os.WriteFile(bashrc, []byte("alias foo=syayly\n"), 0o644)
+	os.Remove(fishFn)
+	if p, found := DetectWrapperAlias("yay", "syay"); found {
+		t.Fatalf("substring should not match (%s)", p)
+	}
+}

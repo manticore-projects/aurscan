@@ -88,6 +88,10 @@ func main() {
 		}
 		fmt.Println("aurscan paru hook installed in " + path)
 		fmt.Println("Plain `paru` will now scan AUR packages before building.")
+		if p, found := yay.DetectWrapperAlias("paru", "sparu"); found {
+			fmt.Println(ui.Red("note: ") + "an `alias paru=sparu` looks set in " + p + ".")
+			fmt.Println("      With the native PreBuildCommand hook it is redundant; you can remove it.")
+		}
 		return
 	}
 	if len(args) > 0 && args[0] == "--uninstall-paru-hook" {
@@ -112,6 +116,11 @@ func main() {
 		fmt.Println("aurscan yay hook installed in " + path)
 		if major >= 13 {
 			fmt.Println("Plain `yay` (v" + fmt.Sprint(major) + ") will now scan AUR packages after download, before build.")
+			if p, found := yay.DetectWrapperAlias("yay", "syay"); found {
+				fmt.Println(ui.Red("note: ") + "an `alias yay=syay` looks set in " + p + ".")
+				fmt.Println("      With the native v13 hook it is redundant — and on v13 it only adds a forced edit prompt.")
+				fmt.Println("      Remove it — fish: `functions -e yay; funcsave yay`  ·  bash/zsh: delete the alias line.")
+			}
 		} else {
 			fmt.Println(ui.Red("note: ") + "yay v13+ is required for Lua hooks; this hook stays dormant on older yay.")
 			fmt.Println("      For yay < 13, use the `syay` wrapper instead (see README).")

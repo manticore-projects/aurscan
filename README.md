@@ -69,16 +69,12 @@ aurscan is built for exactly this: the unfamiliar trick, not just the one you ha
 
 ### From the AUR (recommended)
 
-aurscan is on the AUR as [`aurscan-manticore-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-release-git), built from the project's own PKGBUILD and maintained by [@HaleTom](https://github.com/HaleTom) ([#21](https://github.com/manticore-projects/aurscan/issues/21)). Despite the `-git` suffix it tracks the latest **release tag**, not bleeding-edge `main`, and it updates alongside the rest of your system.
+aurscan is on the AUR as [`aurscan-manticore-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-release-git), built from the project's own PKGBUILD and maintained by [@HaleTom](https://github.com/HaleTom) ([#21](https://github.com/manticore-projects/aurscan/issues/21)). Despite the `-git` suffix it tracks the latest **release tag**, not bleeding-edge `main`.
 
 ```bash
-# bootstrap from scratch — no AUR helper required, which is rather the point
-git clone https://aur.archlinux.org/aurscan-manticore-release-git.git
-cd aurscan-manticore-release-git
-makepkg -si
+paru -S aurscan-manticore-release-git
+# or: yay -S aurscan-manticore-release-git
 ```
-
-Already running a helper? `paru -S aurscan-manticore-release-git` works too. Once installed, jump to [making it transparent](#make-it-transparent).
 
 ### From source
 
@@ -86,50 +82,38 @@ Already running a helper? `paru -S aurscan-manticore-release-git` works too. Onc
 git clone https://github.com/manticore-projects/aurscan
 cd aurscan
 ./install.sh                 # build (needs Go) + install into /usr/local/bin
+#   update:    git pull && ./install.sh
+#   uninstall: ./install.sh --uninstall
 ```
 
-Both routes install **one static binary** under four names: `aurscan` (the CLI), `syay` (the yay wrapper), `sparu` (the paru wrapper), and `aurscan-edit` (the editor gate the helpers invoke).
+Both routes install **one static binary** under four names: `aurscan` (the CLI), `syay` (the yay wrapper), `sparu` (the paru wrapper), and `aurscan-edit` (the editor gate the wrappers invoke).
 
-### Make it transparent
+### Turn it on
 
-Alias your helper so the scanner runs on every build without changing your habits.
-
-```fish
-alias yay=syay
-funcsave yay
-```
-
-<details>
-<summary>bash / zsh</summary>
+Pick the line for your helper — one command, then it scans every AUR build automatically.
 
 ```bash
-echo "alias yay=syay" >> ~/.bashrc   # or ~/.zshrc
+aurscan --install-yay-hook         # yay v13+  (native Lua hook; recommended)
+aurscan --install-paru-hook        # paru      (native PreBuildCommand hook)
 ```
-</details>
 
-For **paru**, see [How it hooks in](#how-it-hooks-into-yay-and-paru) — its native hook means you may not need a wrapper at all.
+On **yay older than v13**, alias the wrapper instead (it forces yay's edit step through the scanner):
 
-### Maintenance
+```fish
+alias yay=syay   # fish: funcsave yay   ·   bash/zsh: echo 'alias yay=syay' >> ~/.bashrc
+```
 
-| Task | Command |
-|---|---|
-| Update (from source) | `git pull && ./install.sh` |
-| Uninstall | `./install.sh --uninstall` |
-| Rootless install | `SUDO= PREFIX=~/.local ./install.sh` |
-| Build only | `make build` |
-| Run tests | `make test` |
-| UPX-pack the binary | `make compress` |
-| Cross-build release artifacts | `make release` |
-
-UPX packing (5.4 MB → 1.8 MB) is applied to the **release artifacts** only. It is deliberately kept out of the AUR `PKGBUILD`, since Arch users build from source.
+Each `--install-*-hook` is reversible with the matching `--uninstall-*-hook`, and both preserve any existing config. How and why this is the right interception point is explained next.
 
 ## How it hooks into yay and paru
 
 A pacman hook is the wrong layer, and this is the whole design idea. PKGBUILD code runs as your user during `makepkg`, *before* pacman ever sees a package, so a `PreTransaction` hook fires only after any build-time payload has already executed. Hook-based AUR "trust" tools score the *maintainer* at install time; they cannot read what the build script actually does.
 
-aurscan intercepts at the only safe point: **after download, before build.**
+aurscan intercepts at the only safe point: **after download, before build.** Which mechanism it uses depends on your helper.
 
-**yay** has no build hook, so the `syay` wrapper points yay's editor at `aurscan-edit` and forces the edit prompt on. The scanner then runs on every AUR PKGBUILD yay is about to build.
+**yay v13+** ships native Lua hooks, and this is the cleanest integration. `aurscan --install-yay-hook` registers an `AURPostDownload` hook in `~/.config/yay/init.lua`. Because that fires *after* `makepkg --verifysource`, the scanner sees the **downloaded sources**, not just the PKGBUILD — and there is no editor to hijack. A flagged package is stopped with `yay.abort`. Your existing `init.lua` is preserved; `--uninstall-yay-hook` removes only aurscan's block.
+
+**yay older than v13** has no build hook, so the `syay` wrapper points yay's editor at `aurscan-edit` and forces the edit prompt on. The scanner then runs on every AUR PKGBUILD yay is about to build.
 
 | You type | What gets scanned |
 |---|---|
@@ -138,21 +122,11 @@ aurscan intercepts at the only safe point: **after download, before build.**
 | `syay -Syu` | every AUR upgrade |
 | *(any of the above)* | and their AUR **dependencies**, which yay also presents before building |
 
-On a clean verdict, aurscan chains to your real `$VISUAL`/`$EDITOR`, so your own manual review still happens. On a non-OK verdict it exits non-zero and yay aborts.
+On a clean verdict, `syay` chains to your real `$VISUAL`/`$EDITOR`, so your own manual review still happens. On a non-OK verdict it exits non-zero and yay aborts.
 
-**paru** has a native `PreBuildCommand` hook, which is cleaner than yay's editor trick. Both install routes ship the `sparu` wrapper, so either approach works out of the box:
+**paru** has a native `PreBuildCommand` hook. `aurscan --install-paru-hook` writes it to `~/.config/paru/paru.conf`; alternatively `alias paru=sparu` injects an ephemeral config (via `PARU_CONF`) that `Include`s your real `paru.conf`, so your own settings are preserved and never modified. Either way the scan runs once per package in its build directory, covering `-S`, interactive search, `-Syu`, AUR dependencies, and cached builds. A non-OK verdict makes paru abort.
 
-```bash
-# Recommended: no wrapper. One-time setup, then plain `paru` is gated.
-aurscan --install-paru-hook        # adds PreBuildCommand to ~/.config/paru/paru.conf
-#   undo with: aurscan --uninstall-paru-hook
-
-# Or a transparent wrapper, symmetric with syay (fish)
-alias paru=sparu
-funcsave paru
-```
-
-Either way the scan runs once per package in its build directory, covering `-S`, bare interactive search, `-Syu`, AUR dependencies, and cached builds. A non-OK verdict makes paru abort. `sparu` injects an ephemeral config via `PARU_CONF` that `Include`s your real `paru.conf`, so your own settings are preserved and never modified.
+All three paths share one gate: a flagged package prints its verdict and prompts on the controlling terminal — abort, or type `INSTALL` to override — and with no terminal it fails closed.
 
 ## Authentication
 

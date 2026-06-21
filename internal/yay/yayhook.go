@@ -57,6 +57,41 @@ func yayMajor() int {
 	return n
 }
 
+// DetectWrapperAlias reports, read-only, whether the user appears to have an
+// alias/function mapping `helper` to aurscan's `wrapper` (e.g. yay->syay) in a
+// common shell config. It never edits anything; it exists only so the install
+// commands can hint that an old wrapper alias is now redundant. Returns the
+// first matching file and true, or "" and false.
+func DetectWrapperAlias(helper, wrapper string) (string, bool) {
+	home, _ := os.UserHomeDir()
+	cfg := os.Getenv("XDG_CONFIG_HOME")
+	if cfg == "" && home != "" {
+		cfg = filepath.Join(home, ".config")
+	}
+	var cands []string
+	if cfg != "" {
+		cands = append(cands,
+			filepath.Join(cfg, "fish", "functions", helper+".fish"), // funcsave yay
+			filepath.Join(cfg, "fish", "config.fish"),
+		)
+	}
+	if home != "" {
+		cands = append(cands,
+			filepath.Join(home, ".bashrc"),
+			filepath.Join(home, ".zshrc"),
+			filepath.Join(home, ".bash_aliases"),
+			filepath.Join(home, ".aliases"),
+		)
+	}
+	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(wrapper) + `\b`)
+	for _, p := range cands {
+		if data, err := os.ReadFile(p); err == nil && re.Match(data) {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // yayHookLua renders the managed Lua block. self is the absolute aurscan path.
 func yayHookLua(self string) string {
 	// self comes from os.Executable() and is shell-safe; the build dir is
