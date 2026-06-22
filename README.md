@@ -81,9 +81,10 @@ Note:
 - A pinned-version `aurscan-manticore-bin` package is planned (help wanted for CI to auto-generate it).
 
 ```bash
-paru -S aurscan-manticore-bin-release-git   # pre-built binaries, no toolchain needed
-# or:
-paru -S aurscan-manticore-release-git       # build from source
+pkg=aurscan-manticore-release-git       # build from source
+# or (recommended):
+pkg=aurscan-manticore-bin-release-git   # pre-built binaries, no toolchain needed
+paru -S "$pkg" || yay -S "$pkg"
 ```
 
 ### From source
