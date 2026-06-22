@@ -74,7 +74,7 @@ aurscan is on the AUR in two variants, both maintained by [@HaleTom](https://git
 | Package | Description |
 |---|---|
 | [`aurscan-manticore-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-release-git) | Builds from source (needs Go); tracks the latest release tag |
-| [`aurscan-manticore-bin-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-bin-release-git) | Installs pre-built release binaries (no Go needed); GPG-verifies the release tag |
+| [`aurscan-manticore-bin-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-bin-release-git) | Installs latest pre-built release binaries (no Go needed). Uses git to determine the latest release. |
 
 Note:
 - Despite the `-git` suffix, both track the latest **release tag**, not bleeding-edge `main` — this is required by the AUR packaging guidelines for packages that aren't pinned to a particular version.
