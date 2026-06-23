@@ -32,7 +32,7 @@ type paclistPackage struct {
 }
 
 func writePaclistFromYay() (int, error) {
-	out, err := run("yay", "-Qua")
+	out, err := runAllowExit1("yay", "-Qua")
 	if err != nil {
 		return 0, fmt.Errorf("yay -Qua failed: %w", err)
 	}

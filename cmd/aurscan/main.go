@@ -202,7 +202,7 @@ func main() {
 }
 
 func updateCheck() []scan.Result {
-	out, err := run("yay", "-Qua")
+	out, err := runAllowExit1("yay", "-Qua")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"yay -Qua failed: "+err.Error())
 		os.Exit(3)
