@@ -6,12 +6,36 @@ import (
 	"unsafe"
 )
 
-var useColor = func() bool {
+var useColor = computeColor()
+
+// computeColor decides colour at startup: NO_COLOR always wins (disable);
+// CLICOLOR_FORCE forces colour on even when stdout is not a terminal (the
+// conventional escape hatch, useful when output is piped through a pager or a
+// hook that redirects stdout); otherwise colour follows whether stdout is a TTY.
+func computeColor() bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}
+	if v := os.Getenv("CLICOLOR_FORCE"); v != "" && v != "0" {
+		return true
+	}
 	return IsTTY(os.Stdout)
-}()
+}
+
+// EnableColorForTTY turns colour on when f is a real terminal and the user has
+// not opted out via NO_COLOR. The paru PreBuildCommand hook calls this because
+// paru runs the hook with stdout redirected to a pipe: the startup check sees a
+// non-TTY stdout and disables colour even though the user is watching a
+// colour-capable terminal, so hook output (and the codex backend, which is only
+// ever used via such a hook here) came out uncoloured (issue #34).
+func EnableColorForTTY(f *os.File) {
+	if os.Getenv("NO_COLOR") != "" {
+		return
+	}
+	if f != nil && IsTTY(f) {
+		useColor = true
+	}
+}
 
 func color(code, s string) string {
 	if !useColor {
