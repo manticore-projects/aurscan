@@ -46,6 +46,51 @@ func printVerdict(r scan.Result) {
 	}
 }
 
+// autoPass reports whether results may proceed without any prompt. A non-OK
+// verdict never auto-passes. In strict mode (the unattended build-hook path) a
+// fallback-produced OK does not auto-pass either: the primary scanner was
+// unavailable, so a degraded clean verdict still requires confirmation.
+func autoPass(results []scan.Result, strict bool) bool {
+	for _, r := range results {
+		if r.V.Verdict != "OK" {
+			return false
+		}
+		if strict && r.Fallback {
+			return false
+		}
+	}
+	return true
+}
+
+// flaggedSet is the set of results that block an auto-pass: every non-OK
+// verdict, plus (in strict mode) any fallback-produced OK.
+func flaggedSet(results []scan.Result, strict bool) []scan.Result {
+	var out []scan.Result
+	for _, r := range results {
+		if r.V.Verdict != "OK" || (strict && r.Fallback) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// blockLine describes why a build was blocked, distinguishing a genuine adverse
+// verdict from a degraded (fallback-only) clean scan.
+func blockLine(results []scan.Result, strict bool) string {
+	worst := "OK"
+	for _, r := range results {
+		if scan.Rank[r.V.Verdict] > scan.Rank[worst] {
+			worst = r.V.Verdict
+		}
+	}
+	n := len(flaggedSet(results, strict))
+	if worst == "OK" {
+		return fmt.Sprintf("%d package(s) approved only by a fallback backend "+
+			"(primary scanner unavailable).", n)
+	}
+	return fmt.Sprintf("%d package(s) flagged %s.", n, worst)
+}
+
 // WorstExit maps the worst verdict across results to an exit code
 // (0 OK, 1 SUSPICIOUS, 2 MALICIOUS).
 func WorstExit(results []scan.Result) int {
@@ -87,14 +132,14 @@ func summarize(results []scan.Result) string {
 // Decide prints verdicts and usage, then returns whether it is safe to proceed
 // WITHOUT any interactive prompt. Used by the paru PreBuildCommand hook, whose
 // stdio may not be a usable TTY: any non-OK verdict blocks (fail-closed).
-func Decide(results []scan.Result) bool {
-	worst := summarize(results)
-	if worst == "OK" {
+func Decide(results []scan.Result, strict bool) bool {
+	summarize(results)
+	if autoPass(results, strict) {
 		fmt.Println(Green("All scanned packages look clean.") +
 			Dim("  (heuristic scan — not a guarantee)"))
 		return true
 	}
-	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), worst)
+	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), blockLine(results, strict))
 	return false
 }
 
@@ -106,17 +151,7 @@ func Decide(results []scan.Result) bool {
 // rather than os.Stdin/os.Stdout. The paru PreBuildCommand hook uses it with
 // /dev/tty so the user can still decide interactively even though paru runs the
 // hook with redirected stdio. Returns true only if the user approves the build.
-func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
-	var flagged []scan.Result
-	worst := "OK"
-	for _, r := range results {
-		if r.V.Verdict != "OK" {
-			flagged = append(flagged, r)
-		}
-		if scan.Rank[r.V.Verdict] > scan.Rank[worst] {
-			worst = r.V.Verdict
-		}
-	}
+func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bool {
 	for _, r := range results {
 		fmt.Fprintf(out, "%s %s (confidence %.0f%%)\n", r.V.Verdict, r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
@@ -126,11 +161,10 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
 			fmt.Fprintf(out, "  [%s] %s: %s\n", f.Severity, f.File, f.Why)
 		}
 	}
-	if worst == "OK" {
+	if autoPass(results, strict) {
 		return true
 	}
-	fmt.Fprintf(out, "%s%d package(s) flagged %s.\n",
-		"!! Build blocked: ", len(flagged), worst)
+	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ", blockLine(results, strict))
 
 	br := bufio.NewReader(in)
 	tty, _ := in.(*os.File) // for input flushing when reading from /dev/tty
@@ -153,23 +187,17 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer) bool {
 	}
 }
 
-func Gate(results []scan.Result) bool {
-	worst := summarize(results)
+func Gate(results []scan.Result, strict bool) bool {
+	summarize(results)
 
-	if worst == "OK" {
+	if autoPass(results, strict) {
 		fmt.Println(Green("All scanned packages look clean.") +
 			Dim("  (heuristic scan — not a guarantee)"))
 		return true
 	}
 
-	var flagged []scan.Result
-	for _, r := range results {
-		if r.V.Verdict != "OK" {
-			flagged = append(flagged, r)
-		}
-	}
-	fmt.Printf("%s%d package(s) flagged %s.\n", Red(Bold("!! Installation blocked: ")),
-		len(flagged), worst)
+	flagged := flaggedSet(results, strict)
+	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")), blockLine(results, strict))
 
 	if !IsTTY(os.Stdin) {
 		return false
@@ -188,7 +216,9 @@ func Gate(results []scan.Result) bool {
 			return false
 		case "r":
 			for _, r := range flagged {
-				offerReport(r, ask)
+				if r.V.Verdict != "OK" { // never "report" a clean (fallback) verdict
+					offerReport(r, ask)
+				}
 			}
 			return false
 		case "c":

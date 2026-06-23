@@ -44,6 +44,12 @@ type Result struct {
 	V      Verdict
 	Usage  Usage
 	Failed bool
+	// Fallback is true when the winning genuine verdict came from a non-primary
+	// backend in the chain (an earlier backend failed and we fell through). A
+	// fallback verdict is a *degraded* scan: the primary scanner was unavailable,
+	// so the unattended build-hook path treats a fallback-produced OK as needing
+	// confirmation rather than an automatic pass.
+	Fallback bool
 }
 
 func failClosed(why string) Verdict {
@@ -106,9 +112,25 @@ func Scan(pkg string, files Files, sig Signals) Result {
 			last = Result{Pkg: pkg, V: v, Usage: u, Failed: true}
 			continue
 		}
-		return Result{Pkg: pkg, V: v, Usage: u}
+		return finishResult(pkg, v, u, i > 0, be)
 	}
 	return last
+}
+
+// finishResult builds the winning Result, marking a fallback (non-primary)
+// verdict and annotating its summary so the degraded scan is visible in every
+// output path.
+func finishResult(pkg string, v Verdict, u Usage, fallback bool, be Backend) Result {
+	if fallback {
+		note := "[verdict from fallback backend " + backendLabel(be) +
+			"; earlier backend(s) in the chain failed]"
+		if s := strings.TrimSpace(v.Summary); s != "" {
+			v.Summary = s + " " + note
+		} else {
+			v.Summary = note
+		}
+	}
+	return Result{Pkg: pkg, V: v, Usage: u, Fallback: fallback}
 }
 
 func buildPrompt(pkg string, files Files, sig Signals) string {
