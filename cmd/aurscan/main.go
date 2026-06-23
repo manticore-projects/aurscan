@@ -47,6 +47,7 @@ const usage = `usage:
 
 func main() {
 	scan.ExtraInstructions = config.ExtraInstructions()
+	scan.ExtraBackends = scan.BackendsFromConfig(config.LLMConfigs())
 	argv0 := os.Args[0]
 	args := os.Args[1:]
 

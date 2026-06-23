@@ -43,37 +43,141 @@ func DefaultModel() string {
 	return "claude-sonnet-4-6"
 }
 
-// Backend describes the resolved LLM backend.
+// Backend describes one resolved LLM backend in the fallback chain.
+//
+// Backend MUST stay all-comparable (every field a string) because dedupe keys a
+// map[Backend]bool on it. NEVER print a Backend or []Backend with %v/%+v — use
+// String(), which redacts APIKey so a stray debug line cannot leak a secret.
+//
+// Empty setting fields mean "use the legacy environment lookup". Env-derived
+// specs keep them empty so each callX reads its own env var at call time; only
+// llmN.conf-derived specs populate them.
 type Backend struct {
-	Kind string // "claude", "codex", "api", "openai", or "cmd"
-	Cmd  string // executable path when Kind == "cmd"
+	Kind     string // "claude", "codex", "api", "openai", or "cmd"
+	Cmd      string // executable path when Kind == "cmd"
+	Model    string // AURSCAN_MODEL / AURSCAN_CODEX_MODEL / AURSCAN_OPENAI_MODEL (per kind)
+	URL      string // openai /chat/completions URL (or an Anthropic-compatible /v1/messages gateway for "api")
+	Fallback string // openai secondary URL (intra-backend, like AURSCAN_OPENAI_URL_FALLBACK)
+	APIKey   string // ANTHROPIC_API_KEY / AURSCAN_OPENAI_API_KEY
 }
 
-// PickBackend auto-detects an available backend, honoring AURSCAN_BACKEND.
-// Recognised values: "claude", "codex", "api", "openai" (OpenAI-compatible
-// local server such as llama.cpp/Ollama/vLLM), or a path to a custom executable.
-func PickBackend() (Backend, error) {
+// String renders a Backend for debug output with the secret redacted.
+func (b Backend) String() string {
+	key := "no"
+	if b.APIKey != "" {
+		key = "yes"
+	}
+	return fmt.Sprintf("{kind:%s cmd:%q model:%q url:%q fallback:%q hasKey:%s}",
+		b.Kind, b.Cmd, b.Model, b.URL, b.Fallback, key)
+}
+
+// ExtraBackends holds the fallback backends parsed from ~/.config/aurscan/llmN.conf.
+// It is set once at startup by the CLI (mirroring ExtraInstructions) and appended
+// after the environment-derived backends to form the chain. Empty by default, so
+// with no config files the chain is exactly the auto-detected/pinned env backend.
+var ExtraBackends []Backend
+
+// nz returns a if non-empty, else b — used to let a per-backend spec field
+// override the legacy environment lookup while keeping the env path intact.
+func nz(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// backendLabel is the short name used in the "trying next" warning. Distinct
+// cmd backends are disambiguated by their path.
+func backendLabel(be Backend) string {
+	if be.Kind == "cmd" && be.Cmd != "" {
+		return "cmd " + be.Cmd
+	}
+	return be.Kind
+}
+
+// BackendsFromConfig turns parsed llmN.conf maps into backend specs. The
+// "backend" value mirrors AURSCAN_BACKEND: one of claude/codex/api/openai, or
+// any other value (e.g. a /path/to/exe) treated as a custom command.
+func BackendsFromConfig(maps []map[string]string) []Backend {
+	var out []Backend
+	for _, m := range maps {
+		var be Backend
+		switch b := m["backend"]; {
+		case b == "claude" || b == "codex" || b == "api" || b == "openai":
+			be = Backend{Kind: b}
+		case b != "": // a path or any other value => custom command (mirrors AURSCAN_BACKEND=/path)
+			be = Backend{Kind: "cmd", Cmd: b}
+		default:
+			dbg("config: skipping llmN.conf entry with no backend= value")
+			continue
+		}
+		be.Model, be.URL, be.Fallback, be.APIKey = m["model"], m["url"], m["fallback"], m["api_key"]
+		out = append(out, be)
+	}
+	return out
+}
+
+// envBackends resolves the backend(s) from the environment, honoring
+// AURSCAN_BACKEND. A pinned value yields exactly one backend (recognised kind,
+// or any other value as a custom executable path). Unpinned, it auto-detects
+// ALL available backends in the documented preference order — so a failure of
+// the first (e.g. Claude) falls through to the next (e.g. Codex). On the success
+// path only the first is ever invoked, so standard operation is unchanged.
+func envBackends() []Backend {
 	switch b := os.Getenv("AURSCAN_BACKEND"); {
 	case b == "claude" || b == "codex" || b == "api" || b == "openai":
-		return Backend{Kind: b}, nil
+		return []Backend{{Kind: b}}
 	case b != "":
-		return Backend{Kind: "cmd", Cmd: b}, nil
+		return []Backend{{Kind: "cmd", Cmd: b}}
 	}
+	var out []Backend
 	if _, err := exec.LookPath("claude"); err == nil {
-		return Backend{Kind: "claude"}, nil
+		out = append(out, Backend{Kind: "claude"})
 	}
 	if _, err := exec.LookPath("codex"); err == nil {
-		return Backend{Kind: "codex"}, nil
+		out = append(out, Backend{Kind: "codex"})
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		return Backend{Kind: "api"}, nil
+		out = append(out, Backend{Kind: "api"})
 	}
 	if os.Getenv("AURSCAN_OPENAI_URL") != "" {
-		return Backend{Kind: "openai"}, nil
+		out = append(out, Backend{Kind: "openai"})
 	}
-	return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude`) or Codex CLI (`codex`) and log in, " +
-		"set ANTHROPIC_API_KEY, set AURSCAN_OPENAI_URL for a local model, " +
-		"or AURSCAN_BACKEND=/path/to/cmd")
+	return out
+}
+
+// Backends is the ordered fallback chain: environment-derived backends first,
+// then the llmN.conf-derived ExtraBackends, deduplicated (first occurrence wins).
+func Backends() []Backend {
+	return dedupe(append(envBackends(), ExtraBackends...))
+}
+
+// dedupe drops exact duplicate specs while preserving order. Equality is full
+// struct equality, so two backends differing only in URL/model remain distinct.
+func dedupe(in []Backend) []Backend {
+	seen := map[Backend]bool{}
+	var out []Backend
+	for _, be := range in {
+		if seen[be] {
+			continue
+		}
+		seen[be] = true
+		out = append(out, be)
+	}
+	return out
+}
+
+// PickBackend returns the first backend in the chain, or an error if the chain
+// is empty. It is the gate pipeline.Run uses to decide LLM-vs-rules; Scan walks
+// the full chain itself.
+func PickBackend() (Backend, error) {
+	bs := Backends()
+	if len(bs) == 0 {
+		return Backend{}, fmt.Errorf("no backend: install Claude Code (`claude`) or Codex CLI (`codex`) and log in, " +
+			"set ANTHROPIC_API_KEY, set AURSCAN_OPENAI_URL for a local model, " +
+			"or AURSCAN_BACKEND=/path/to/cmd")
+	}
+	return bs[0], nil
 }
 
 func estimateTokens(s string) int { return len(s) / 4 }
@@ -98,6 +202,13 @@ func Call(instructions, content string) (string, Usage, error) {
 	if err != nil {
 		return "", Usage{}, err
 	}
+	return CallBackend(be, instructions, content)
+}
+
+// CallBackend sends instructions + content to a specific backend and returns
+// the raw model text plus usage. Scan calls this once per backend as it walks
+// the fallback chain. Each backend gets its own full llmTimeout budget.
+func CallBackend(be Backend, instructions, content string) (string, Usage, error) {
 	dbg("backend=%s cmd=%q", be.Kind, be.Cmd)
 	to := llmTimeout()
 	estIn := estimateTokens(instructions + content)
@@ -105,26 +216,25 @@ func Call(instructions, content string) (string, Usage, error) {
 	var (
 		text string
 		u    Usage
+		err  error
 	)
 	switch be.Kind {
 	case "openai":
 		// Per-attempt deadlines live inside callOpenAI so that a stalled
 		// primary URL does not eat the fallback URL's whole budget.
-		text, u, err = callOpenAI(context.Background(), to, instructions, content, estIn)
+		text, u, err = callOpenAI(context.Background(), to, be, instructions, content, estIn)
 	default:
-		var ctx context.Context
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), to)
+		ctx, cancel := context.WithTimeout(context.Background(), to)
 		defer cancel()
 		switch be.Kind {
 		case "claude":
-			text, u, err = callClaudeCLI(ctx, instructions, content, estIn)
+			text, u, err = callClaudeCLI(ctx, be, instructions, content, estIn)
 		case "codex":
-			text, u, err = callCodexCLI(ctx, instructions, content, estIn)
+			text, u, err = callCodexCLI(ctx, be, instructions, content, estIn)
 		case "api":
-			text, u, err = callAPI(ctx, instructions, content)
+			text, u, err = callAPI(ctx, be, instructions, content)
 		default:
-			text, u, err = callCmd(ctx, be.Cmd, instructions, content, estIn)
+			text, u, err = callCmd(ctx, be, instructions, content, estIn)
 		}
 	}
 	if err != nil {
@@ -146,7 +256,8 @@ func annotateTimeout(err error, to time.Duration) error {
 	return err
 }
 
-func callClaudeCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+func callClaudeCLI(ctx context.Context, be Backend, instructions, content string, estIn int) (string, Usage, error) {
+	_ = be // the Claude Code CLI takes no model flag today; be.Model/APIKey are a future hook
 	run := func(args ...string) (string, error) {
 		dbg("claude CLI args=%v", args)
 		dbgBlock("claude stdin (untrusted package content)", content)
@@ -247,7 +358,7 @@ func parseClaudeEnvelope(raw string, estIn int) (string, Usage, bool) {
 	return "", Usage{}, false
 }
 
-func callCodexCLI(ctx context.Context, instructions, content string, estIn int) (string, Usage, error) {
+func callCodexCLI(ctx context.Context, be Backend, instructions, content string, estIn int) (string, Usage, error) {
 	args := []string{
 		"exec",
 		"--skip-git-repo-check",
@@ -256,7 +367,7 @@ func callCodexCLI(ctx context.Context, instructions, content string, estIn int) 
 		"--sandbox", "read-only",
 		"--color", "never",
 	}
-	if model := os.Getenv("AURSCAN_CODEX_MODEL"); model != "" {
+	if model := nz(be.Model, os.Getenv("AURSCAN_CODEX_MODEL")); model != "" {
 		args = append(args, "--model", model)
 	}
 	args = append(args, instructions)
@@ -272,8 +383,8 @@ func callCodexCLI(ctx context.Context, instructions, content string, estIn int) 
 	return text, Usage{In: estIn, Out: estimateTokens(text), Estimated: true}, nil
 }
 
-func callAPI(ctx context.Context, instructions, content string) (string, Usage, error) {
-	model := DefaultModel()
+func callAPI(ctx context.Context, be Backend, instructions, content string) (string, Usage, error) {
+	model := nz(be.Model, DefaultModel())
 	body, _ := json.Marshal(map[string]any{
 		"model":      model,
 		"max_tokens": maxOutTokens,
@@ -281,9 +392,9 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 		"messages":   []map[string]string{{"role": "user", "content": content}},
 	})
 	dbgBlock("anthropic API request body", string(body))
-	req, _ := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, "POST", nz(be.URL, apiURL), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
+	req.Header.Set("x-api-key", nz(be.APIKey, os.Getenv("ANTHROPIC_API_KEY")))
 	req.Header.Set("anthropic-version", "2023-06-01")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -327,12 +438,23 @@ func callAPI(ctx context.Context, instructions, content string) (string, Usage, 
 // local CPU instance — generalising the community connector from issue #1.
 // Each URL gets its own full timeout budget. Tokens are taken from the server's
 // usage block when present, else estimated; cost is n/a for local models.
-func callOpenAI(parent context.Context, to time.Duration, instructions, content string, estIn int) (string, Usage, error) {
-	urls := []string{os.Getenv("AURSCAN_OPENAI_URL")}
-	if fb := os.Getenv("AURSCAN_OPENAI_URL_FALLBACK"); fb != "" {
-		urls = append(urls, fb)
+func callOpenAI(parent context.Context, to time.Duration, be Backend, instructions, content string, estIn int) (string, Usage, error) {
+	// A spec URL fully overrides the environment; the env primary/fallback pair
+	// is used only when the spec leaves URL empty (the env-derived backend).
+	var urls []string
+	if be.URL != "" {
+		urls = append(urls, be.URL)
+	} else if u := os.Getenv("AURSCAN_OPENAI_URL"); u != "" {
+		urls = append(urls, u)
 	}
-	apiKey := openAIKey()
+	if be.Fallback != "" {
+		urls = append(urls, be.Fallback)
+	} else if be.URL == "" {
+		if fb := os.Getenv("AURSCAN_OPENAI_URL_FALLBACK"); fb != "" {
+			urls = append(urls, fb)
+		}
+	}
+	apiKey := nz(be.APIKey, openAIKey())
 	// The model is sent only when AURSCAN_OPENAI_MODEL is set. Leaving it out
 	// lets a routing proxy (LiteLLM and similar) select the model itself, so you
 	// can switch models at the proxy without touching this env var or restarting.
@@ -346,7 +468,7 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 			{"role": "user", "content": content},
 		},
 	}
-	if model := os.Getenv("AURSCAN_OPENAI_MODEL"); model != "" {
+	if model := nz(be.Model, os.Getenv("AURSCAN_OPENAI_MODEL")); model != "" {
 		payload["model"] = model
 	}
 	body, _ := json.Marshal(payload)
@@ -407,7 +529,8 @@ func callOpenAI(parent context.Context, to time.Duration, instructions, content 
 	return "", Usage{}, lastErr
 }
 
-func callCmd(ctx context.Context, cmd, instructions, content string, estIn int) (string, Usage, error) {
+func callCmd(ctx context.Context, be Backend, instructions, content string, estIn int) (string, Usage, error) {
+	cmd := be.Cmd
 	payload := instructions + "\n\n" + content
 	dbg("cmd backend: %s", cmd)
 	dbgBlock("cmd stdin", payload)

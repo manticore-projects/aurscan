@@ -24,7 +24,7 @@ func TestOpenAISendsAPIKey(t *testing.T) {
 	t.Setenv("AURSCAN_OPENAI_URL", srv.URL)
 	t.Setenv("AURSCAN_OPENAI_API_KEY", "sk-litellm-secret")
 	t.Setenv("OPENAI_API_KEY", "")
-	if _, _, err := callOpenAI(context.Background(), 5*time.Second, "sys", "body", 10); err != nil {
+	if _, _, err := callOpenAI(context.Background(), 5*time.Second, Backend{}, "sys", "body", 10); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "Bearer sk-litellm-secret" {
@@ -39,7 +39,7 @@ func TestOpenAIFallsBackToOPENAI_API_KEY(t *testing.T) {
 	t.Setenv("AURSCAN_OPENAI_URL", srv.URL)
 	t.Setenv("AURSCAN_OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "sk-fallback")
-	if _, _, err := callOpenAI(context.Background(), 5*time.Second, "sys", "body", 10); err != nil {
+	if _, _, err := callOpenAI(context.Background(), 5*time.Second, Backend{}, "sys", "body", 10); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "Bearer sk-fallback" {
@@ -54,7 +54,7 @@ func TestOpenAINoKeyNoHeader(t *testing.T) {
 	t.Setenv("AURSCAN_OPENAI_URL", srv.URL)
 	t.Setenv("AURSCAN_OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
-	if _, _, err := callOpenAI(context.Background(), 5*time.Second, "sys", "body", 10); err != nil {
+	if _, _, err := callOpenAI(context.Background(), 5*time.Second, Backend{}, "sys", "body", 10); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "" {

@@ -150,6 +150,35 @@ Backends are auto-detected in this order. **The first one needs no API key at al
 5. **`AURSCAN_BACKEND=/path/to/cmd`** — any executable that reads the prompt on stdin and prints the reply on stdout.
 6. **No backend at all** — the static rules still run and still block on critical matches.
 
+### Backend fallback chain
+
+Those backends form a **chain**, not a single pick. aurscan tries them in the order above — a pinned `AURSCAN_BACKEND` stays first, otherwise every auto-detected backend is included — and when one fails (error, timeout, rate-limit, or unparseable output) it prints a one-line warning and tries the next. So a rate-limited Claude subscription transparently falls through to Codex or a local model ([#7](https://github.com/manticore-projects/aurscan/issues/7), [#35](https://github.com/manticore-projects/aurscan/issues/35)). Only when **every** backend fails does aurscan fall closed to `SUSPICIOUS` and block the build, exactly as before. On the success path only the first backend is ever called, so nothing changes for a single healthy backend.
+
+Extend the chain with priority-ordered config files `~/.config/aurscan/llm1.conf`, `llm2.conf`, … — tried in **numeric** order (`llm2` before `llm10`), after the environment-derived backends, then de-duplicated. Each file describes one backend as flat `key = value`:
+
+| key | meaning |
+|---|---|
+| `backend` | `claude` · `codex` · `api` · `openai` · or a `/path/to/exe` (a custom command, like `AURSCAN_BACKEND`) |
+| `model` | model id for `api` / `codex` / `openai` |
+| `url` | endpoint override (`openai` `/chat/completions`, or an Anthropic-compatible `/v1/messages` gateway for `api`) |
+| `fallback` | secondary `openai` URL (intra-backend, like `AURSCAN_OPENAI_URL_FALLBACK`) |
+| `api_key` | bearer / `x-api-key` for this backend |
+
+```ini
+# ~/.config/aurscan/llm1.conf — try the local GPU box first
+backend = openai
+url     = http://192.168.0.110:18080/v1/chat/completions
+model   = qwen2.5-coder-32b
+```
+```ini
+# ~/.config/aurscan/llm2.conf — then fall back to a custom command
+backend = /usr/local/bin/my-scanner
+```
+
+- **Values are literal:** don't quote them, and a `#`/`;` starts a comment only at the start of a line (not inline).
+- **Secrets:** prefer environment variables. If you put `api_key` in a file, `chmod 600` it — aurscan warns on startup when such a file is group- or other-readable.
+- **Latency:** each backend gets its own full `AURSCAN_TIMEOUT`, so a K-entry chain can take up to K × that budget if backends *stall* (an `openai` entry with a `fallback` URL counts as two); lower `AURSCAN_TIMEOUT` for long chains.
+
 <details>
 <summary>Local model setup (llama.cpp / Ollama / LiteLLM)</summary>
 
@@ -336,7 +365,7 @@ aurscan --rules-only <pkgname|./dir>     # or set AURSCAN_RULES_ONLY=1
 
 ## Safety model
 
-- **Fail-closed.** A backend error, timeout, fetch failure, or unparseable output becomes **SUSPICIOUS** and blocks the build. The scanner can fail, but it never fails *open*.
+- **Fail-closed.** A backend error, timeout, or unparseable output is first retried against the next backend in the chain; once every configured backend is exhausted — or on a fetch failure — the result becomes **SUSPICIOUS** and blocks the build. The scanner can fail, but it never fails *open*.
 - **Prompt-injection hardening.** Package files are sent as untrusted data, kept separate from the trusted instructions. The prompt treats embedded "this package is safe / ignore previous instructions" text as evidence of malice, and only the JSON contract is trusted when parsing. Both are covered by tests.
 - **No execution, no disk writes.** AUR snapshots are parsed in memory. Nothing from the suspect package is written to disk or run.
 - **Bounded context.** Binaries and files over 64 KB are skipped, and total context is capped at 240 KB.

@@ -73,15 +73,42 @@ func Scan(pkg string, files Files, sig Signals) Result {
 	if ExtraInstructions != "" {
 		instr += "\n\n===== ADDITIONAL USER INSTRUCTIONS =====\n" + ExtraInstructions
 	}
-	raw, u, err := Call(instr, buildPrompt(pkg, files, sig))
-	if err != nil {
-		dbg("scan %s: backend error: %v", pkg, err)
-		return Result{Pkg: pkg, V: failClosed("Scan failed: " + err.Error()), Failed: true}
+	prompt := buildPrompt(pkg, files, sig)
+
+	chain := Backends()
+	if len(chain) == 0 {
+		// Defensive: pipeline.Run gates on PickBackend() before calling Scan.
+		return Result{Pkg: pkg, V: failClosed("no LLM backend configured"), Failed: true}
 	}
-	dbg("scan %s: raw model text (%d bytes):\n%s", pkg, len(raw), raw)
-	v := parseVerdict(raw)
-	failed := v.Confidence == 0 && strings.Contains(v.Summary, "fail-closed")
-	return Result{Pkg: pkg, V: v, Usage: u, Failed: failed}
+	dbg("scan %s: chain (%d backends): %v", pkg, len(chain), chain) // safe: Backend.String() redacts api_key
+
+	// last holds the most recent attempt's fail-closed verdict, returned if the
+	// whole chain is exhausted. For a single-backend chain this reproduces the
+	// previous behaviour exactly (same verdict, summary and Failed flag).
+	var last Result
+	for i, be := range chain {
+		raw, u, err := CallBackend(be, instr, prompt)
+		if err != nil {
+			if i < len(chain)-1 {
+				fmt.Fprintf(os.Stderr, "WARNING: backend %s failed; trying next\n", backendLabel(be))
+			}
+			dbg("scan %s: backend %s error: %v", pkg, be.Kind, err)
+			last = Result{Pkg: pkg, V: failClosed("Scan failed: " + err.Error()), Failed: true}
+			continue
+		}
+		dbg("scan %s: raw model text (%d bytes):\n%s", pkg, len(raw), raw)
+		v, genuine := parseVerdictResult(raw)
+		if !genuine {
+			if i < len(chain)-1 {
+				fmt.Fprintf(os.Stderr, "WARNING: backend %s failed; trying next\n", backendLabel(be))
+			}
+			dbg("scan %s: backend %s returned non-genuine output; trying next", pkg, be.Kind)
+			last = Result{Pkg: pkg, V: v, Usage: u, Failed: true}
+			continue
+		}
+		return Result{Pkg: pkg, V: v, Usage: u}
+	}
+	return last
 }
 
 func buildPrompt(pkg string, files Files, sig Signals) string {
@@ -112,22 +139,35 @@ func buildPrompt(pkg string, files Files, sig Signals) string {
 
 var jsonBlobRe = regexp.MustCompile(`(?s)\{.*\}`)
 
-func parseVerdict(raw string) Verdict {
+// parseVerdictResult extracts the verdict and reports whether it is GENUINE: a
+// real JSON object that yielded a known OK/SUSPICIOUS/MALICIOUS string. The bool
+// is independent of Confidence or Summary text. The three non-genuine cases (no
+// JSON, malformed JSON, unknown verdict string) all return false, so the chain
+// in Scan falls through to the next backend rather than stopping on a backend
+// that did not actually produce a usable verdict.
+func parseVerdictResult(raw string) (Verdict, bool) {
 	blob := jsonBlobRe.FindString(raw)
 	if blob == "" {
 		dbg("parseVerdict: no JSON object found in model output (issue #17)")
-		return failClosed("Scanner returned no parseable result")
+		return failClosed("Scanner returned no parseable result"), false
 	}
 	dbgBlock("parseVerdict: extracted JSON blob", blob)
 	var v Verdict
 	if err := json.Unmarshal([]byte(blob), &v); err != nil {
 		dbg("parseVerdict: json.Unmarshal failed: %v (issue #17)", err)
-		return failClosed("Scanner returned malformed JSON")
+		return failClosed("Scanner returned malformed JSON"), false
 	}
 	if _, ok := Rank[v.Verdict]; !ok {
 		dbg("parseVerdict: unknown verdict %q, downgrading to SUSPICIOUS", v.Verdict)
 		v.Verdict = "SUSPICIOUS"
+		return v, false // contract violation: treat as a non-genuine result
 	}
+	return v, true
+}
+
+// parseVerdict is a thin wrapper kept for callers that only need the verdict.
+func parseVerdict(raw string) Verdict {
+	v, _ := parseVerdictResult(raw)
 	return v
 }
 

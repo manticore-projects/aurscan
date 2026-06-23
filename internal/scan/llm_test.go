@@ -45,7 +45,7 @@ func TestCallOpenAIModelOmittedWhenEnvUnset(t *testing.T) {
 	os.Unsetenv("AURSCAN_OPENAI_MODEL")
 	url, bodyCh := startOpenAIStub(t)
 	t.Setenv("AURSCAN_OPENAI_URL", url)
-	if _, _, err := callOpenAI(context.Background(), time.Second, "sys", "user", 1); err != nil {
+	if _, _, err := callOpenAI(context.Background(), time.Second, Backend{}, "sys", "user", 1); err != nil {
 		t.Fatalf("callOpenAI: %v", err)
 	}
 	if model, ok := requestModel(t, <-bodyCh); ok {
@@ -58,7 +58,7 @@ func TestCallOpenAIModelForwardedWhenEnvSet(t *testing.T) {
 	t.Setenv("AURSCAN_OPENAI_MODEL", want)
 	url, bodyCh := startOpenAIStub(t)
 	t.Setenv("AURSCAN_OPENAI_URL", url)
-	if _, _, err := callOpenAI(context.Background(), time.Second, "sys", "user", 1); err != nil {
+	if _, _, err := callOpenAI(context.Background(), time.Second, Backend{}, "sys", "user", 1); err != nil {
 		t.Fatalf("callOpenAI: %v", err)
 	}
 	if model, ok := requestModel(t, <-bodyCh); !ok || model != want {
