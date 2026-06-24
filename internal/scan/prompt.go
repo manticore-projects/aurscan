@@ -61,6 +61,19 @@ helper files:
   characters in URLs (%E2%80%AE is a bidi override, %E2%80%8B a zero-width
   space) and of bidirectional or zero-width characters anywhere in the scripts,
   which exist only to make what you read differ from what runs.
+- You cannot browse the web and cannot confirm that a URL belongs to the
+  legitimate project, so never treat a source as safe merely because it *looks*
+  official. When a source=() entry (or a curl/wget in build()/package()) pulls
+  from a generic object store, file host or user-content host where the bucket,
+  path or subdomain is chosen by whoever uploads — e.g. storage.googleapis.com,
+  *.s3.amazonaws.com, *.r2.dev, *.b-cdn.net, *.pages.dev, *.workers.dev,
+  *.blob.core.windows.net, transfer.sh, file.io — the host alone proves nothing:
+  an attacker can register a plausible bucket (gvisor vs gvisor-stable) just as
+  easily as the real project. Treat unverifiable provenance as a risk: lower
+  your confidence, lean SUSPICIOUS, and say plainly that the source could not be
+  tied to the project's upstream — do not resolve the doubt in the package's
+  favour. The same applies when a binary or archive comes from a host unrelated
+  to the package's stated upstream (the url= field) that is not a known forge.
 - Suspicious mismatch between pkgname/pkgdesc and what the scripts actually do.
 
 REPUTATION & PROVENANCE — weigh these heavily when signals are provided:

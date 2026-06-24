@@ -177,6 +177,53 @@ func isReputableGitHost(host string) bool {
 	return strings.HasSuffix(host, ".googlesource.com")
 }
 
+// genericHostSuffixes are object stores, file hosts and user-content hosts where
+// the bucket / path / subdomain is chosen by whoever uploads, so the host alone
+// does not establish provenance: a legitimate project and an attacker sit on the
+// same host, distinguished only by an attacker-choosable bucket name. A source
+// on one of these is not malicious by itself, but its provenance cannot be
+// inferred and must be verified out of band (SRC-002, issue #40).
+var genericHostSuffixes = []string{
+	"storage.googleapis.com", "amazonaws.com", "r2.dev",
+	"r2.cloudflarestorage.com", "b-cdn.net", "pages.dev", "workers.dev",
+	"netlify.app", "vercel.app", "surge.sh", "web.app", "firebaseapp.com",
+	"blob.core.windows.net", "digitaloceanspaces.com", "aliyuncs.com",
+	"backblazeb2.com", "wasabisys.com", "fastly.net", "transfer.sh",
+	"temp.sh", "file.io", "gofile.io", "anonfiles.com", "mediafire.com",
+}
+
+func isGenericHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, s := range genericHostSuffixes {
+		if host == s || strings.HasSuffix(host, "."+s) {
+			return true
+		}
+	}
+	return false
+}
+
+// registrableDomain is a public-suffix-free approximation: the last two labels
+// of a host (e.g. "objects.example.co" -> "example.co"). Good enough for an
+// informational host-comparison signal; it is intentionally not exact for
+// multi-label TLDs such as .co.uk.
+func registrableDomain(host string) string {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	parts := strings.Split(host, ".")
+	if len(parts) <= 2 {
+		return host
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// httpSourceHost captures the host of any http(s) URL (not only VCS sources),
+// so SRC-002/SRC-003 can examine binary downloads in source=() and curl/wget in
+// build()/package(). Like gitSourceHost it accepts non-ASCII so a homoglyph host
+// is examined as written.
+var httpSourceHost = regexp.MustCompile(`(?i)\bhttps?://([^\s/:"')]+)`)
+
+// urlField captures the host of the PKGBUILD's url= (upstream homepage) field.
+var urlField = regexp.MustCompile(`(?im)^\s*url=["']?https?://([^\s/:"')]+)`)
+
 // Scan runs the catalog over a set of files and returns hits, de-duplicated by
 // (code, file). Matches that fall on a full-line comment are ignored, since a
 // commented-out line is inert. SRC-001 is informational and only meaningful
@@ -228,6 +275,38 @@ func Scan(files map[string]string) []Hit {
 					continue
 				}
 				add("SRC-001", "git source on uncommon host", Medium, name, lineAround(text, start))
+			}
+
+			// SRC-002 / SRC-003: examine every http(s) host the package pulls
+			// from (source=() binaries, curl/wget in build()/package()) for
+			// provenance the host cannot establish (issue #40). The url= line is
+			// the upstream homepage, not a download, so it is excluded.
+			var upstreamDomain string
+			if m := urlField.FindStringSubmatch(text); m != nil {
+				upstreamDomain = registrableDomain(m[1])
+			}
+			for _, m := range httpSourceHost.FindAllStringSubmatchIndex(text, -1) {
+				start, host := m[0], text[m[2]:m[3]]
+				if isCommentAt(text, start) {
+					continue
+				}
+				if urlField.MatchString(lineAt(text, start)) {
+					continue // this is the url= homepage, not a source download
+				}
+				switch {
+				case isGenericHost(host):
+					// Provenance not verifiable from the host: the bucket/path is
+					// attacker-choosable. A signal to verify, not proof of malice.
+					add("SRC-002", "source on a generic object-storage / file host (verify provenance)",
+						Medium, name, lineAround(text, start))
+				case upstreamDomain != "" && !isReputableGitHost(host) &&
+					registrableDomain(host) != upstreamDomain &&
+					!isReputableGitHost(upstreamDomain):
+					// Download host matches neither the stated upstream (url=)
+					// domain nor a known forge.
+					add("SRC-003", "source host does not match the package's stated upstream",
+						Medium, name, lineAround(text, start))
+				}
 			}
 		}
 	}
@@ -286,6 +365,19 @@ func Worst(hits []Hit) Severity {
 		}
 	}
 	return worst
+}
+
+// lineAt returns the full line containing offset idx (untrimmed), used to test
+// whether a match sits on the url= assignment line.
+func lineAt(text string, idx int) string {
+	start := strings.LastIndexByte(text[:idx], '\n') + 1
+	end := strings.IndexByte(text[idx:], '\n')
+	if end < 0 {
+		end = len(text)
+	} else {
+		end += idx
+	}
+	return text[start:end]
 }
 
 func lineAround(text string, idx int) string {
