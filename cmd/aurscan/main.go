@@ -40,13 +40,17 @@ const usage = `usage:
   aurscan --prebuild <dir>         gate mode (paru PreBuildCommand / yay v13 hook)
   aurscan --install-paru-hook      enable scanning in paru.conf (no wrapper)
   aurscan --install-yay-hook       enable scanning in yay v13 init.lua (no wrapper)
+  aurscan --uninstall-paru-hook    remove aurscan hook from paru.conf
+  aurscan --uninstall-yay-hook     remove aurscan hook from yay init.lua
   aurscan --debug ...              trace LLM request/response to stderr
   aurscan --version                print version and exit
   syay <yay args...>               transparent yay wrapper (symlink)
   sparu <paru args...>             transparent paru wrapper (symlink)`
 
 func main() {
+	config.LoadEnvFile()
 	scan.ExtraInstructions = config.ExtraInstructions()
+	scan.ExtraBackends = scan.BackendsFromConfig(config.LLMConfigs())
 	argv0 := os.Args[0]
 	args := os.Args[1:]
 
@@ -195,14 +199,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"nothing scanned")
 		os.Exit(3)
 	}
-	if ui.Gate(results) {
+	if ui.Gate(results, false) {
 		os.Exit(0)
 	}
 	os.Exit(maxInt(1, ui.WorstExit(results)))
 }
 
 func updateCheck() []scan.Result {
-	out, err := run("yay", "-Qua")
+	out, err := runAllowExit1("yay", "-Qua")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"yay -Qua failed: "+err.Error())
 		os.Exit(3)
