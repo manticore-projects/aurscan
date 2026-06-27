@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/manticore-projects/aurscan/internal/aur"
 	"github.com/manticore-projects/aurscan/internal/config"
@@ -28,6 +29,12 @@ import (
 	"github.com/manticore-projects/aurscan/internal/version"
 	"github.com/manticore-projects/aurscan/internal/yay"
 )
+
+var pkgNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9@._+\-]*$`)
+
+func isValidPkgName(s string) bool {
+	return pkgNameRe.MatchString(s)
+}
 
 const usage = `usage:
   aurscan <pkgname|./dir> [...]    scan AUR package(s) / local build dir(s)
@@ -242,6 +249,10 @@ func scanArgs(args []string) []scan.Result {
 			ui.Progress(name, len(files))
 			results = append(results, pipeline.Run(name, files, ""))
 		} else {
+			if !isValidPkgName(a) {
+				fmt.Fprintln(os.Stderr, ui.Red("error: ")+fmt.Sprintf("%q is not a valid package name", a))
+				os.Exit(3)
+			}
 			names = append(names, a)
 		}
 	}
