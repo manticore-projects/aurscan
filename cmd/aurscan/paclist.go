@@ -34,7 +34,7 @@ type paclistPackage struct {
 func writePaclistFromYay() (int, error) {
 	out, err := runAllowExit1("yay", "-Qua")
 	if err != nil {
-		return 0, fmt.Errorf("yay -Qua failed: %w", err)
+		return 0, fmt.Errorf("yay/paru -Qua failed: %w", err)
 	}
 	list, err := newPaclist(out)
 	if err != nil {
@@ -88,7 +88,7 @@ func newPaclist(yayOutput string) (paclist, error) {
 		Format:      paclistFormat,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Host:        host,
-		Source:      "yay -Qua",
+		Source:      "yay/paru -Qua",
 		Packages:    []paclistPackage{},
 	}
 	for _, line := range splitLines(yayOutput) {
@@ -97,7 +97,7 @@ func newPaclist(yayOutput string) (paclist, error) {
 			continue
 		}
 		if err := validatePackageName(pkg.Name); err != nil {
-			return paclist{}, fmt.Errorf("yay returned invalid package name %q: %w", pkg.Name, err)
+			return paclist{}, fmt.Errorf("yay/paru returned invalid package name %q: %w", pkg.Name, err)
 		}
 		list.Packages = append(list.Packages, pkg)
 	}

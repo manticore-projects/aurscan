@@ -5,7 +5,7 @@
 // Invocation modes (by binary name / subcommand):
 //
 //	aurscan <pkgname|./dir> [...]   scan AUR package(s) / local build dir(s)
-//	aurscan --update-check          scan pending AUR updates (yay -Qua)
+//	aurscan --update-check          scan pending AUR updates (yay/paru -Qua)
 //	aurscan --gen-file              write pending AUR updates to aurscan.paclist
 //	aurscan --scan-file             scan packages listed in ./aurscan.paclist
 //	aurscan --edit-hook <files...>  $EDITOR-replacement gate for yay
@@ -31,12 +31,12 @@ import (
 
 const usage = `usage:
   aurscan <pkgname|./dir> [...]    scan AUR package(s) / local build dir(s)
-  aurscan --update-check           scan pending AUR updates (yay -Qua)
+  aurscan --update-check           scan pending AUR updates (yay/paru -Qua)
   aurscan --gen-file               write pending AUR updates to ./aurscan.paclist
   aurscan --scan-file              scan packages listed in ./aurscan.paclist
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --score <file|dir|->     print 0-100 trust score; exit=score, 255=fail
-  aurscan --edit-hook <files...>   gate mode (yay invokes this as its editor)
+  aurscan --edit-hook <files...>   gate mode (yay/paru invoke this as their editor)
   aurscan --prebuild <dir>         gate mode (paru PreBuildCommand / yay v13 hook)
   aurscan --install-paru-hook      enable scanning in paru.conf (no wrapper)
   aurscan --install-yay-hook       enable scanning in yay v13 init.lua (no wrapper)
@@ -208,7 +208,7 @@ func main() {
 func updateCheck() []scan.Result {
 	out, err := runAllowExit1("yay", "-Qua")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"yay -Qua failed: "+err.Error())
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"yay/paru -Qua failed: "+err.Error())
 		os.Exit(3)
 	}
 	var pending []string
