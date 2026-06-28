@@ -35,16 +35,16 @@ func printVerdict(r scan.Result) {
 		Dim(fmt.Sprintf("confidence %.0f%%", r.V.Confidence)))
 	w := TerminalWidth()
 	if r.V.Summary != "" {
-		fmt.Printf("         %s\n", WrapLine(r.V.Summary, w-9, "         "))
+		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-2, "  "))
 	}
 	for _, f := range r.V.Findings {
-		prefixLen := 14 + len(f.Severity) + len(f.File)
-		fmt.Printf("         %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
-			WrapLine(f.Why, w-prefixLen, "         "))
+		prefixLen := 7 + len(f.Severity) + len(f.File)
+		fmt.Printf("  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
+			WrapLine(f.Why, w-prefixLen, "  "))
 		if f.Quote != "" {
-			wrapped := WrapLine("> "+f.Quote, w-15, "             > ")
+			wrapped := WrapLine("> "+f.Quote, w-4, "  > ")
 			lines := strings.Split(wrapped, "\n")
-			lines[0] = "             " + lines[0]
+			lines[0] = "  " + lines[0]
 			for _, line := range lines {
 				fmt.Println(Dim(line))
 			}
@@ -120,7 +120,7 @@ func summarize(results []scan.Result) string {
 	for _, r := range results {
 		printVerdict(r)
 		if r.Usage.In > 0 || r.Usage.Out > 0 || r.Usage.HaveCost {
-			fmt.Println(Dim("         " + WrapLine("\u21b3 "+r.Usage.String(), w-9, "         \u21b3 ")))
+			fmt.Println(Dim("  " + WrapLine("\u21b3 "+r.Usage.String(), w-2, "  \u21b3 ")))
 			session.Add(r.Usage)
 			calls++
 		}
