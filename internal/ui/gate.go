@@ -15,14 +15,14 @@ func Progress(pkg string, nfiles int) {
 	fmt.Println(Dim(fmt.Sprintf("  scanning %s (%d files) ...", pkg, nfiles)))
 }
 
-func sevColor(sev, s string) string {
+func SevColor(sev, s string) string {
 	switch sev {
 	case "critical":
 		return Red(s)
 	case "warning":
 		return Yellow(s)
 	case "info":
-		return s
+		return Bold(s)
 	}
 	return Dim(s)
 }
@@ -39,7 +39,7 @@ func printVerdict(r scan.Result) {
 	}
 	for _, f := range r.V.Findings {
 		prefixLen := 14 + len(f.Severity) + len(f.File)
-		fmt.Printf("         %s %s: %s\n", sevColor(f.Severity, "["+f.Severity+"]"), f.File,
+		fmt.Printf("         %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 			WrapLine(f.Why, w-prefixLen, "         "))
 		if f.Quote != "" {
 			wrapped := WrapLine("> "+f.Quote, w-15, "             > ")
@@ -168,7 +168,7 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 		}
 		for _, f := range r.V.Findings {
 			prefixLen := 7 + len(f.Severity) + len(f.File)
-			fmt.Fprintf(out, "  [%s] %s: %s\n", f.Severity, f.File,
+			fmt.Fprintf(out, "  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 				WrapLine(f.Why, w-prefixLen, "  "))
 		}
 	}

@@ -260,7 +260,7 @@ func printResultStderr(r scan.Result) {
 	}
 	for _, f := range r.V.Findings {
 		prefixLen := 7 + len(f.Severity) + len(f.File)
-		fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", f.Severity, f.File,
+		fmt.Fprintf(os.Stderr, "  %s %s: %s\n", ui.SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 			ui.WrapLine(f.Why, w-prefixLen, "  "))
 	}
 }
