@@ -27,10 +27,21 @@ func SevColor(sev, s string) string {
 	return Dim(s)
 }
 
+func VerdictBadge(verdict string) string {
+	switch verdict {
+	case "OK":
+		return Green("  OK  ")
+	case "SUSPICIOUS":
+		return Red("SUSPICIOUS")
+	case "MALICIOUS":
+		return Red("MALICIOUS")
+	default:
+		return verdict
+	}
+}
+
 func printVerdict(r scan.Result) {
-	badge := map[string]string{
-		"OK": Green("  OK  "), "SUSPICIOUS": Yellow(" SUSP "), "MALICIOUS": Red(" MAL! "),
-	}[r.V.Verdict]
+	badge := VerdictBadge(r.V.Verdict)
 	fmt.Printf("[%s] %s  %s\n", badge, Bold(r.Pkg),
 		Dim(fmt.Sprintf("confidence %.0f%%", r.V.Confidence)))
 	w := TerminalWidth()
@@ -162,7 +173,7 @@ func Decide(results []scan.Result, strict bool) bool {
 func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bool {
 	w := TerminalWidth()
 	for _, r := range results {
-		fmt.Fprintf(out, "%s %s (confidence %.0f%%)\n", r.V.Verdict, r.Pkg, r.V.Confidence)
+		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n", VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
 			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-2, "  "))
 		}

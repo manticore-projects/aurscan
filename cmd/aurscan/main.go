@@ -253,8 +253,8 @@ func scanArgs(args []string) []scan.Result {
 // not pollute the score on stdout in --score mode.
 func printResultStderr(r scan.Result) {
 	w := ui.TerminalWidth()
-	fmt.Fprintf(os.Stderr, "%s  %s (confidence %.0f%%)\n",
-		r.V.Verdict, r.Pkg, r.V.Confidence)
+	fmt.Fprintf(os.Stderr, "[%s] %s (confidence %.0f%%)\n",
+		ui.VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 	if r.V.Summary != "" {
 		fmt.Fprintf(os.Stderr, "  %s\n", ui.WrapLine(r.V.Summary, w-2, "  "))
 	}
