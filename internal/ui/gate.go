@@ -22,7 +22,7 @@ func SevColor(sev, s string) string {
 	case "warning":
 		return Yellow(s)
 	case "info":
-		return Bold(s)
+		return color("1;37", s)
 	}
 	return Dim(s)
 }
