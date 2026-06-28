@@ -89,9 +89,9 @@ func main() {
 			os.Exit(3)
 		}
 		fmt.Println("aurscan paru hook installed in " + path)
-		fmt.Println("Plain `paru` will now scan AUR packages before building.")
+		fmt.Println(ui.WrapLine("Plain `paru` will now scan AUR packages before building.", ui.TerminalWidth(), "  "))
 		if p, found := yay.DetectWrapperAlias("paru", "sparu"); found {
-			fmt.Println(ui.Red("note: ") + "an `alias paru=sparu` looks set in " + p + ".")
+			fmt.Println(ui.WrapLine(ui.Red("note: ")+"an `alias paru=sparu` looks set in "+p+".", ui.TerminalWidth(), "     "))
 			fmt.Println("      With the native PreBuildCommand hook it is redundant; you can remove it.")
 		}
 		return
@@ -117,14 +117,14 @@ func main() {
 		}
 		fmt.Println("aurscan yay hook installed in " + path)
 		if major >= 13 {
-			fmt.Println("Plain `yay` (v" + fmt.Sprint(major) + ") will now scan AUR packages after download, before build.")
+			fmt.Println(ui.WrapLine("Plain `yay` (v"+fmt.Sprint(major)+") will now scan AUR packages after download, before build.", ui.TerminalWidth(), "  "))
 			if p, found := yay.DetectWrapperAlias("yay", "syay"); found {
-				fmt.Println(ui.Red("note: ") + "an `alias yay=syay` looks set in " + p + ".")
+				fmt.Println(ui.WrapLine(ui.Red("note: ")+"an `alias yay=syay` looks set in "+p+".", ui.TerminalWidth(), "     "))
 				fmt.Println("      With the native v13 hook it is redundant — and on v13 it only adds a forced edit prompt.")
 				fmt.Println("      Remove it — fish: `functions -e yay; funcsave yay`  ·  bash/zsh: delete the alias line.")
 			}
 		} else {
-			fmt.Println(ui.Red("note: ") + "yay v13+ is required for Lua hooks; this hook stays dormant on older yay.")
+			fmt.Println(ui.WrapLine(ui.Red("note: ")+"yay v13+ is required for Lua hooks; this hook stays dormant on older yay.", ui.TerminalWidth(), "     "))
 			fmt.Println("      For yay < 13, use the `syay` wrapper instead (see README).")
 		}
 		return
@@ -252,13 +252,16 @@ func scanArgs(args []string) []scan.Result {
 // printResultStderr writes a concise verdict + findings to stderr so it does
 // not pollute the score on stdout in --score mode.
 func printResultStderr(r scan.Result) {
+	w := ui.TerminalWidth()
 	fmt.Fprintf(os.Stderr, "%s  %s (confidence %.0f%%)\n",
 		r.V.Verdict, r.Pkg, r.V.Confidence)
 	if r.V.Summary != "" {
-		fmt.Fprintf(os.Stderr, "  %s\n", r.V.Summary)
+		fmt.Fprintf(os.Stderr, "  %s\n", ui.WrapLine(r.V.Summary, w-2, "  "))
 	}
 	for _, f := range r.V.Findings {
-		fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", f.Severity, f.File, f.Why)
+		prefixLen := 7 + len(f.Severity) + len(f.File)
+		fmt.Fprintf(os.Stderr, "  [%s] %s: %s\n", f.Severity, f.File,
+			ui.WrapLine(f.Why, w-prefixLen, "  "))
 	}
 }
 
