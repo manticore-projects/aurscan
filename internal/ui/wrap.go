@@ -15,6 +15,39 @@ var terminalWidth int
 // instead of falling back to 100 and overflowing a narrow terminal.
 const minWrapWidth = 20
 
+// Indent constants for WrapLine continuation lines. Exported so tests can
+// reference the same symbols as production code, preventing drift.
+const (
+	// IndentBody is the 2-space indent for body text: summaries, finding text,
+	// hook install messages.
+	IndentBody = "  "
+	// IndentBlock is the 4-space indent for block-message continuation lines.
+	IndentBlock = "    "
+	// IndentReport is the 5-space indent for report instructions and install-hook
+	// note lines.
+	IndentReport = "     "
+	// IndentUsage is the indent for usage lines: 2 spaces + arrow glyph.
+	IndentUsage = "  ↳ "
+	// IndentQuote is the indent for quote continuation: 2 spaces + ">".
+	IndentQuote = "  > "
+)
+
+// Width offsets subtracted from TerminalWidth() to get the content budget for
+// WrapLine. Each pairs with a first-line prefix that WrapLine does not manage.
+// The +1 margins preserve the exact widths used before this refactor.
+const (
+	// PrefixNote is the visible width of IndentReport + "note: " printed before
+	// WrapLine in the install-hook note lines, plus a 1-char safety margin.
+	PrefixNote = len(IndentReport) + len("note: ") + 1 // 5 + 6 + 1 = 12
+	// prefixBlockDecide is the visible width of "!! aurscan blocked this build: ".
+	prefixBlockDecide = len("!! aurscan blocked this build: ") // 31
+	// prefixBlockGateVia is the visible width of "!! Build blocked: " plus a
+	// 1-char safety margin.
+	prefixBlockGateVia = len("!! Build blocked: ") + 1 // 18 + 1 = 19
+	// prefixBlockGate is the visible width of "!! Installation blocked: ".
+	prefixBlockGate = len("!! Installation blocked: ") // 25
+)
+
 // terminalWidth is a snapshot taken at startup. It does not update on terminal
 // resize during a running scan — wrapping stays consistent with the initial
 // viewport for the lifetime of the process.

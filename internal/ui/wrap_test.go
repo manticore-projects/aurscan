@@ -20,7 +20,7 @@ func TestWrapLineWidthZero(t *testing.T) {
 
 func TestWrapLineNegativeWidthDoesNotOverflow(t *testing.T) {
 	long := strings.Repeat("hello world ", 20)
-	got := WrapLine(long, -50, "  ")
+	got := WrapLine(long, -50, IndentBody)
 	for _, line := range strings.Split(got, "\n") {
 		if len(line) > minWrapWidth {
 			t.Fatalf("negative width line exceeds minWrapWidth %d: %q (%d)", minWrapWidth, line, len(line))
@@ -29,36 +29,36 @@ func TestWrapLineNegativeWidthDoesNotOverflow(t *testing.T) {
 }
 
 func TestWrapLineShorterThanWidth(t *testing.T) {
-	got := WrapLine("short", 80, "  ")
+	got := WrapLine("short", 80, IndentBody)
 	if got != "short" {
 		t.Fatalf("got %q, want %q", got, "short")
 	}
 }
 
 func TestWrapLineWrapsAtWordBoundary(t *testing.T) {
-	got := WrapLine("hello world this is", 12, "  ")
-	want := "hello world\n  this is"
+	got := WrapLine("hello world this is", 12, IndentBody)
+	want := "hello world" + "\n" + IndentBody + "this is"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
 func TestWrapLineSingleLongWordNotSplit(t *testing.T) {
-	got := WrapLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 10, "  ")
+	got := WrapLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 10, IndentBody)
 	if strings.Contains(got, "\n") {
 		t.Fatalf("long word should not be split: %q", got)
 	}
 }
 
 func TestWrapLineEmpty(t *testing.T) {
-	got := WrapLine("", 80, "  ")
+	got := WrapLine("", 80, IndentBody)
 	if got != "" {
 		t.Fatalf("got %q, want empty", got)
 	}
 }
 
 func TestWrapLineWhitespaceOnly(t *testing.T) {
-	got := WrapLine("   ", 80, "  ")
+	got := WrapLine("   ", 80, IndentBody)
 	if got != "" {
 		t.Fatalf("got %q, want empty", got)
 	}
@@ -73,36 +73,36 @@ func TestWrapLineMultipleWraps(t *testing.T) {
 }
 
 func TestWrapLineIndentPreserved(t *testing.T) {
-	got := WrapLine("a bb ccc dddd eeeee ffffff ggggggg", 10, "    ")
+	got := WrapLine("a bb ccc dddd eeeee ffffff ggggggg", 10, IndentBlock)
 	lines := strings.Split(got, "\n")
 	for i := 1; i < len(lines); i++ {
-		if !strings.HasPrefix(lines[i], "    ") {
+		if !strings.HasPrefix(lines[i], IndentBlock) {
 			t.Fatalf("continuation line %d missing indent: %q", i, lines[i])
 		}
-		if len(strings.TrimPrefix(lines[i], "    ")) > 10 {
+		if len(strings.TrimPrefix(lines[i], IndentBlock)) > 10 {
 			t.Fatalf("continuation line %d exceeds width: %q", i, lines[i])
 		}
 	}
 }
 
 func TestWrapLineLongWordThenShort(t *testing.T) {
-	got := WrapLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ short", 10, "  ")
-	want := "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n  short"
+	got := WrapLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ short", 10, IndentBody)
+	want := "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n" + IndentBody + "short"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
 func TestWrapLineExactWidth(t *testing.T) {
-	got := WrapLine("1234567890", 10, "  ")
+	got := WrapLine("1234567890", 10, IndentBody)
 	if got != "1234567890" {
 		t.Fatalf("got %q, want exact width no wrap", got)
 	}
 }
 
 func TestWrapLineJustOverWidth(t *testing.T) {
-	got := WrapLine("1234567890 a", 10, "  ")
-	want := "1234567890\n  a"
+	got := WrapLine("1234567890 a", 10, IndentBody)
+	want := "1234567890\n" + IndentBody + "a"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -174,14 +174,14 @@ func TestWrapQuotePrefix(t *testing.T) {
 
 func TestWrapUsageLine(t *testing.T) {
 	s := "in: 500 · out: 320 · cost: $0.05  in: 600 · out: 400 · cost: $0.08"
-	got := WrapLine(s, 30, "         \u21b3 ")
+	got := WrapLine(s, 30, "         ↳ ")
 	lines := strings.Split(got, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapping, got %q", got)
 	}
 	for i, line := range lines {
 		if i > 0 {
-			if !strings.HasPrefix(line, "         \u21b3 ") {
+			if !strings.HasPrefix(line, "         ↳ ") {
 				t.Fatalf("continuation line %d missing usage indent: %q", i, line)
 			}
 		}
@@ -190,17 +190,17 @@ func TestWrapUsageLine(t *testing.T) {
 
 func TestWrapBlockMessage(t *testing.T) {
 	msg := "5 package(s) flagged MALICIOUS with multiple findings across several PKGBUILDs and install scripts"
-	got := WrapLine(msg, 50, "    ")
+	got := WrapLine(msg, 50, IndentBlock)
 	lines := strings.Split(got, "\n")
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapping, got %q", got)
 	}
 	for i, line := range lines {
 		if i > 0 {
-			if !strings.HasPrefix(line, "    ") {
+			if !strings.HasPrefix(line, IndentBlock) {
 				t.Fatalf("continuation line %d missing block indent: %q", i, line)
 			}
-			content := strings.TrimPrefix(line, "    ")
+			content := strings.TrimPrefix(line, IndentBlock)
 			if len(content) > 50 {
 				t.Fatalf("continuation line %d exceeds width 50: %q (%d chars)", i, line, len(content))
 			}
@@ -226,7 +226,7 @@ func TestWrapHookMessage(t *testing.T) {
 }
 
 func TestWrapScannerUsage(t *testing.T) {
-	s := "scanner usage: 5 call(s) \u00b7 in: 2048 \u00b7 out: 1536 \u00b7 cost: $0.10  in: 4096 \u00b7 out: 3072 \u00b7 cost: $0.20"
+	s := "scanner usage: 5 call(s) · in: 2048 · out: 1536 · cost: $0.10  in: 4096 · out: 3072 · cost: $0.20"
 	got := WrapLine(s, 50, "scanner usage: ")
 	lines := strings.Split(got, "\n")
 	if len(lines) < 2 {

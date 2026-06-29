@@ -22,7 +22,7 @@ func SevColor(sev, s string) string {
 	case "warning":
 		return Yellow(s)
 	case "info":
-		return color("1;37", s)
+		return White(s)
 	}
 	return Dim(s)
 }
@@ -32,9 +32,9 @@ func VerdictBadge(verdict string) string {
 	case "OK":
 		return Green("  OK  ")
 	case "SUSPICIOUS":
-		return Red("SUSPICIOUS")
+		return Yellow(" SUSP ")
 	case "MALICIOUS":
-		return Red("MALICIOUS")
+		return Red(" MAL! ")
 	default:
 		return verdict
 	}
@@ -46,16 +46,16 @@ func printVerdict(r scan.Result) {
 		Dim(fmt.Sprintf("confidence %.0f%%", r.V.Confidence)))
 	w := TerminalWidth()
 	if r.V.Summary != "" {
-		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-2, "  "))
+		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 	}
 	for _, f := range r.V.Findings {
 		prefixLen := FindingPrefixLen(f.Severity, f.File)
 		fmt.Printf("  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
-			WrapLine(f.Why, w-prefixLen, "  "))
+			WrapLine(f.Why, w-prefixLen, IndentBody))
 		if f.Quote != "" {
-			wrapped := WrapLine("> "+f.Quote, w-4, "  > ")
+			wrapped := WrapLine("> "+f.Quote, w-len(IndentQuote), IndentQuote)
 			lines := strings.Split(wrapped, "\n")
-			lines[0] = "  " + lines[0]
+			lines[0] = IndentBody + lines[0]
 			for _, line := range lines {
 				fmt.Println(Dim(line))
 			}
@@ -131,7 +131,7 @@ func summarize(results []scan.Result) string {
 	for _, r := range results {
 		printVerdict(r)
 		if r.Usage.In > 0 || r.Usage.Out > 0 || r.Usage.HaveCost {
-			fmt.Println(Dim("  " + WrapLine("\u21b3 "+r.Usage.String(), w-4, "  \u21b3 ")))
+			fmt.Println(Dim(IndentBody + WrapLine("↳ "+r.Usage.String(), w-len(IndentUsage), IndentUsage)))
 			session.Add(r.Usage)
 			calls++
 		}
@@ -142,7 +142,7 @@ func summarize(results []scan.Result) string {
 
 	fmt.Println()
 	if calls > 0 {
-		fmt.Println(Dim(WrapLine(fmt.Sprintf("scanner usage: %d call(s) \u00b7 %s", calls, session.String()), w, "")))
+		fmt.Println(Dim(WrapLine(fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String()), w, "")))
 	}
 	return worst
 }
@@ -158,7 +158,7 @@ func Decide(results []scan.Result, strict bool) bool {
 			Dim("  (heuristic scan — not a guarantee)"))
 		return true
 	}
-	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), WrapLine(blockLine(results, strict), w-31, "    "))
+	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), WrapLine(blockLine(results, strict), w-prefixBlockDecide, IndentBlock))
 	return false
 }
 
@@ -175,18 +175,18 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 	for _, r := range results {
 		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n", VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
-			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-2, "  "))
+			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 		}
 		for _, f := range r.V.Findings {
 			prefixLen := FindingPrefixLen(f.Severity, f.File)
 			fmt.Fprintf(out, "  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
-				WrapLine(f.Why, w-prefixLen, "  "))
+				WrapLine(f.Why, w-prefixLen, IndentBody))
 		}
 	}
 	if autoPass(results, strict) {
 		return true
 	}
-	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ", WrapLine(blockLine(results, strict), w-19, "    "))
+	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ", WrapLine(blockLine(results, strict), w-prefixBlockGateVia, IndentBlock))
 
 	br := bufio.NewReader(in)
 	tty, _ := in.(*os.File) // for input flushing when reading from /dev/tty
@@ -220,7 +220,7 @@ func Gate(results []scan.Result, strict bool) bool {
 	}
 
 	flagged := flaggedSet(results, strict)
-	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")), WrapLine(blockLine(results, strict), w-25, "    "))
+	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")), WrapLine(blockLine(results, strict), w-prefixBlockGate, IndentBlock))
 
 	if !IsTTY(os.Stdin) {
 		return false
