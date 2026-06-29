@@ -89,9 +89,9 @@ func main() {
 			os.Exit(3)
 		}
 		fmt.Println("aurscan paru hook installed in " + path)
-		fmt.Println(ui.WrapLine("Plain `paru` will now scan AUR packages before building.", ui.TerminalWidth(), "  "))
+		fmt.Println(ui.WrapLine("Plain `paru` will now scan AUR packages before building.", ui.TerminalWidth()-2, "  "))
 		if p, found := yay.DetectWrapperAlias("paru", "sparu"); found {
-			fmt.Println(ui.WrapLine(ui.Red("note: ")+"an `alias paru=sparu` looks set in "+p+".", ui.TerminalWidth(), "     "))
+			fmt.Println("     " + ui.Red("note: ") + ui.WrapLine("an `alias paru=sparu` looks set in "+p+".", ui.TerminalWidth()-12, "     "))
 			fmt.Println("      With the native PreBuildCommand hook it is redundant; you can remove it.")
 		}
 		return
@@ -117,14 +117,14 @@ func main() {
 		}
 		fmt.Println("aurscan yay hook installed in " + path)
 		if major >= 13 {
-			fmt.Println(ui.WrapLine("Plain `yay` (v"+fmt.Sprint(major)+") will now scan AUR packages after download, before build.", ui.TerminalWidth(), "  "))
+			fmt.Println(ui.WrapLine("Plain `yay` (v"+fmt.Sprint(major)+") will now scan AUR packages after download, before build.", ui.TerminalWidth()-2, "  "))
 			if p, found := yay.DetectWrapperAlias("yay", "syay"); found {
-				fmt.Println(ui.WrapLine(ui.Red("note: ")+"an `alias yay=syay` looks set in "+p+".", ui.TerminalWidth(), "     "))
+				fmt.Println("     " + ui.Red("note: ") + ui.WrapLine("an `alias yay=syay` looks set in "+p+".", ui.TerminalWidth()-12, "     "))
 				fmt.Println("      With the native v13 hook it is redundant — and on v13 it only adds a forced edit prompt.")
 				fmt.Println("      Remove it — fish: `functions -e yay; funcsave yay`  ·  bash/zsh: delete the alias line.")
 			}
 		} else {
-			fmt.Println(ui.WrapLine(ui.Red("note: ")+"yay v13+ is required for Lua hooks; this hook stays dormant on older yay.", ui.TerminalWidth(), "     "))
+			fmt.Println("     " + ui.Red("note: ") + ui.WrapLine("yay v13+ is required for Lua hooks; this hook stays dormant on older yay.", ui.TerminalWidth()-12, "     "))
 			fmt.Println("      For yay < 13, use the `syay` wrapper instead (see README).")
 		}
 		return
@@ -259,7 +259,7 @@ func printResultStderr(r scan.Result) {
 		fmt.Fprintf(os.Stderr, "  %s\n", ui.WrapLine(r.V.Summary, w-2, "  "))
 	}
 	for _, f := range r.V.Findings {
-		prefixLen := 7 + len(f.Severity) + len(f.File)
+		prefixLen := ui.FindingPrefixLen(f.Severity, f.File)
 		fmt.Fprintf(os.Stderr, "  %s %s: %s\n", ui.SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 			ui.WrapLine(f.Why, w-prefixLen, "  "))
 	}

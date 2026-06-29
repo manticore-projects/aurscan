@@ -9,6 +9,12 @@ import (
 
 var terminalWidth int
 
+// minWrapWidth is the floor for the content width passed to WrapLine. When a
+// caller's prefix is wider than the terminal (e.g. a very long filename),
+// w-prefixLen goes negative; clamping here keeps the wrapped tail readable
+// instead of falling back to 100 and overflowing a narrow terminal.
+const minWrapWidth = 20
+
 // terminalWidth is a snapshot taken at startup. It does not update on terminal
 // resize during a running scan — wrapping stays consistent with the initial
 // viewport for the lifetime of the process.
@@ -35,12 +41,18 @@ func TerminalWidth() int {
 	return terminalWidth
 }
 
+// FindingPrefixLen returns the visible byte length of the literal framing around
+// a finding line: "  [" + severity + "] " + file + ": " — i.e. 2 leading spaces,
+// 2 brackets, 1 space after the bracket, a colon, and a space after the colon.
+// Callers pass w-FindingPrefixLen(sev,file) as the content width to WrapLine so
+// the wrapped finding text aligns under the text after the colon.
+func FindingPrefixLen(sev, file string) int {
+	return 7 + len(sev) + len(file)
+}
+
 func WrapLine(s string, width int, indent string) string {
 	if width <= 0 {
-		width = 100
-	}
-	if indent == "" {
-		indent = "  "
+		width = minWrapWidth
 	}
 	var b strings.Builder
 	for {

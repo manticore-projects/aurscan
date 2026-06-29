@@ -44,9 +44,9 @@ func offerReport(r scan.Result, prompt func(string) string) {
 	w := TerminalWidth()
 	fmt.Println()
 	fmt.Println(Bold("Report drafted: ") + path)
-	fmt.Println(WrapLine("  1. Review it, then email it to "+ReportTo, w, "     "))
-	fmt.Println(WrapLine("  2. Also file a deletion request on the AUR web page:", w, "     "))
-	fmt.Println(WrapLine(fmt.Sprintf("     "+pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'", r.Pkg), w, "     "))
+	fmt.Println("  1. " + WrapLine("Review it, then email it to "+ReportTo, w-5, "     "))
+	fmt.Println("  2. " + WrapLine("Also file a deletion request on the AUR web page:", w-5, "     "))
+	fmt.Println("     " + WrapLine(fmt.Sprintf(pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'", r.Pkg), w-5, "     "))
 	if _, err := exec.LookPath("xdg-email"); err == nil && prompt != nil {
 		if strings.ToLower(strings.TrimSpace(prompt("  Open your mail client now? [y/N] "))) == "y" {
 			body, _ := os.ReadFile(path)

@@ -49,7 +49,7 @@ func printVerdict(r scan.Result) {
 		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-2, "  "))
 	}
 	for _, f := range r.V.Findings {
-		prefixLen := 7 + len(f.Severity) + len(f.File)
+		prefixLen := FindingPrefixLen(f.Severity, f.File)
 		fmt.Printf("  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 			WrapLine(f.Why, w-prefixLen, "  "))
 		if f.Quote != "" {
@@ -131,7 +131,7 @@ func summarize(results []scan.Result) string {
 	for _, r := range results {
 		printVerdict(r)
 		if r.Usage.In > 0 || r.Usage.Out > 0 || r.Usage.HaveCost {
-			fmt.Println(Dim("  " + WrapLine("\u21b3 "+r.Usage.String(), w-2, "  \u21b3 ")))
+			fmt.Println(Dim("  " + WrapLine("\u21b3 "+r.Usage.String(), w-4, "  \u21b3 ")))
 			session.Add(r.Usage)
 			calls++
 		}
@@ -178,7 +178,7 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-2, "  "))
 		}
 		for _, f := range r.V.Findings {
-			prefixLen := 7 + len(f.Severity) + len(f.File)
+			prefixLen := FindingPrefixLen(f.Severity, f.File)
 			fmt.Fprintf(out, "  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
 				WrapLine(f.Why, w-prefixLen, "  "))
 		}

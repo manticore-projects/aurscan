@@ -9,7 +9,22 @@ func TestWrapLineWidthZero(t *testing.T) {
 	long := strings.Repeat("hello world ", 20)
 	got := WrapLine(long, 0, "")
 	if !strings.Contains(got, "\n") {
-		t.Fatalf("width 0 should default to 100 and wrap: %q", got)
+		t.Fatalf("width 0 should clamp to minWrapWidth and wrap: %q", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > minWrapWidth {
+			t.Fatalf("width 0 line exceeds minWrapWidth %d: %q (%d)", minWrapWidth, line, len(line))
+		}
+	}
+}
+
+func TestWrapLineNegativeWidthDoesNotOverflow(t *testing.T) {
+	long := strings.Repeat("hello world ", 20)
+	got := WrapLine(long, -50, "  ")
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > minWrapWidth {
+			t.Fatalf("negative width line exceeds minWrapWidth %d: %q (%d)", minWrapWidth, line, len(line))
+		}
 	}
 }
 
@@ -140,11 +155,19 @@ func TestWrapLineWidth120(t *testing.T) {
 
 func TestWrapQuotePrefix(t *testing.T) {
 	s := "the file downloads and executes a remote binary from a URL that was registered less than 24 hours ago"
-	got := WrapLine(s, 40, "             > ")
+	const indent = "             > "
+	got := WrapLine(s, 40, indent)
 	lines := strings.Split(got, "\n")
 	for i, line := range lines {
-		if i > 0 && !strings.HasPrefix(line, "             > ") {
+		if i > 0 && !strings.HasPrefix(line, indent) {
 			t.Fatalf("continuation line %d missing quote indent: %q", i, line)
+		}
+		content := line
+		if i > 0 {
+			content = strings.TrimPrefix(line, indent)
+		}
+		if len(content) > 40 {
+			t.Fatalf("line %d content exceeds width 40: %q (%d)", i, content, len(content))
 		}
 	}
 }
