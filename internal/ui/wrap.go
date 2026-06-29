@@ -60,7 +60,8 @@ func detectWidth() int {
 		Row, Col       uint16
 		XPixel, YPixel uint16
 	}
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(),
+		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
 	if errno != 0 || ws.Col == 0 {
 		return 100
 	}

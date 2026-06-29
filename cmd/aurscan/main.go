@@ -89,9 +89,13 @@ func main() {
 			os.Exit(3)
 		}
 		fmt.Println("aurscan paru hook installed in " + path)
-		fmt.Println(ui.WrapLine("Plain `paru` will now scan AUR packages before building.", ui.TerminalWidth()-len(ui.IndentBody), ui.IndentBody))
+		fmt.Println(ui.WrapLine(
+			"Plain `paru` will now scan AUR packages before building.",
+			ui.TerminalWidth()-len(ui.IndentBody), ui.IndentBody))
 		if p, found := yay.DetectWrapperAlias("paru", "sparu"); found {
-			fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine("an `alias paru=sparu` looks set in "+p+".", ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
+			fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine(
+				"an `alias paru=sparu` looks set in "+p+".",
+				ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
 			fmt.Println("      With the native PreBuildCommand hook it is redundant; you can remove it.")
 		}
 		return
@@ -117,14 +121,20 @@ func main() {
 		}
 		fmt.Println("aurscan yay hook installed in " + path)
 		if major >= 13 {
-			fmt.Println(ui.WrapLine("Plain `yay` (v"+fmt.Sprint(major)+") will now scan AUR packages after download, before build.", ui.TerminalWidth()-len(ui.IndentBody), ui.IndentBody))
+			fmt.Println(ui.WrapLine(
+				"Plain `yay` (v"+fmt.Sprint(major)+") will now scan AUR packages after download, before build.",
+				ui.TerminalWidth()-len(ui.IndentBody), ui.IndentBody))
 			if p, found := yay.DetectWrapperAlias("yay", "syay"); found {
-				fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine("an `alias yay=syay` looks set in "+p+".", ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
+				fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine(
+					"an `alias yay=syay` looks set in "+p+".",
+					ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
 				fmt.Println("      With the native v13 hook it is redundant — and on v13 it only adds a forced edit prompt.")
 				fmt.Println("      Remove it — fish: `functions -e yay; funcsave yay`  ·  bash/zsh: delete the alias line.")
 			}
 		} else {
-			fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine("yay v13+ is required for Lua hooks; this hook stays dormant on older yay.", ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
+			fmt.Println(ui.IndentReport + ui.Red("note: ") + ui.WrapLine(
+				"yay v13+ is required for Lua hooks; this hook stays dormant on older yay.",
+				ui.TerminalWidth()-ui.PrefixNote, ui.IndentReport))
 			fmt.Println("      For yay < 13, use the `syay` wrapper instead (see README).")
 		}
 		return

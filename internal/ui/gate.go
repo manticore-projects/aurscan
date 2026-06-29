@@ -142,7 +142,9 @@ func summarize(results []scan.Result) string {
 
 	fmt.Println()
 	if calls > 0 {
-		fmt.Println(Dim(WrapLine(fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String()), w, "")))
+		fmt.Println(Dim(WrapLine(
+			fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String()),
+			w, "")))
 	}
 	return worst
 }
@@ -158,7 +160,8 @@ func Decide(results []scan.Result, strict bool) bool {
 			Dim("  (heuristic scan — not a guarantee)"))
 		return true
 	}
-	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), WrapLine(blockLine(results, strict), w-prefixBlockDecide, IndentBlock))
+	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")),
+		WrapLine(blockLine(results, strict), w-prefixBlockDecide, IndentBlock))
 	return false
 }
 
@@ -173,7 +176,8 @@ func Decide(results []scan.Result, strict bool) bool {
 func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bool {
 	w := TerminalWidth()
 	for _, r := range results {
-		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n", VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
+		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n",
+			VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
 			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 		}
@@ -186,7 +190,8 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 	if autoPass(results, strict) {
 		return true
 	}
-	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ", WrapLine(blockLine(results, strict), w-prefixBlockGateVia, IndentBlock))
+	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ",
+		WrapLine(blockLine(results, strict), w-prefixBlockGateVia, IndentBlock))
 
 	br := bufio.NewReader(in)
 	tty, _ := in.(*os.File) // for input flushing when reading from /dev/tty
@@ -220,7 +225,8 @@ func Gate(results []scan.Result, strict bool) bool {
 	}
 
 	flagged := flaggedSet(results, strict)
-	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")), WrapLine(blockLine(results, strict), w-prefixBlockGate, IndentBlock))
+	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")),
+		WrapLine(blockLine(results, strict), w-prefixBlockGate, IndentBlock))
 
 	if !IsTTY(os.Stdin) {
 		return false
