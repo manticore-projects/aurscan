@@ -44,7 +44,7 @@ func offerReport(r scan.Result, prompt func(string) string) {
 	w := TerminalWidth()
 	fmt.Println()
 	fmt.Println(Bold("Report drafted: ") + path)
-	fmt.Println("  1. " + WrapLine("Review it, then email it to "+ReportTo, w-5, "     "))
+	fmt.Println("  1. " + WrapLine("Review it, then email it to "+Bold(ReportTo), w-5, "     "))
 	fmt.Println("  2. " + WrapLine("Also file a deletion request on the AUR web page:", w-5, "     "))
 	fmt.Println("     " + WrapLine(fmt.Sprintf(pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'", r.Pkg), w-5, "     "))
 	if _, err := exec.LookPath("xdg-email"); err == nil && prompt != nil {
