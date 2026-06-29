@@ -7,84 +7,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-06-29
+
+### Added
+- **Tunable temperature and token budget for local models.** The OpenAI-
+  compatible backend accepts `temperature` and `max_tokens` per backend
+  (`llmN.conf`) and via `AURSCAN_OPENAI_TEMPERATURE` / `AURSCAN_OPENAI_MAX_TOKENS`.
+  Reasoning models such as Gemma need `temperature=1.0` and a larger budget — with
+  the old fixed 2000-token cap they spent it all on hidden reasoning and returned
+  empty `content` with `finish_reason=length`, which now produces an actionable
+  error instead of a silent empty verdict.
+- **Startup env file (#42).** `~/.config/aurscan/env` is loaded at startup so a
+  GUI or launcher can manage LLM configuration in one place. (PR by musqz)
+
+### Changed
+- **paru parity in messages (#48, #49).** Usage text and error messages mention
+  `paru` alongside `yay`, and `--uninstall-yay-hook` / `--uninstall-paru-hook`
+  now appear in `--help`. (PRs by HaleTom)
+
+### Fixed
+- **`syay` refresh/print/help edge cases (#37).** `-Sy`, `-Sp` and `-Sh` are
+  classified as non-build, so the editor gate is not injected for them. (PR by musqz)
+- **`yay -Qua` real errors no longer masked (#38).** An exit 1 with output on
+  stderr is treated as a genuine failure rather than "no pending updates", so a
+  real error is surfaced instead of silently reported as up-to-date. (PR by musqz)
+
+## [0.6.3] - 2026-06-24
+
+### Added
+- **Source-provenance signals (#40).** The auditor cannot browse to confirm a
+  URL belongs to a project, so a plausible but attacker-controlled source no
+  longer passes on looks alone. Two offline rules flag downloads whose provenance
+  the host cannot establish: `SRC-002` for generic object-storage / file hosts
+  where the bucket, path or subdomain is attacker-choosable
+  (`storage.googleapis.com`, `*.s3.amazonaws.com`, `*.r2.dev`, `*.pages.dev`,
+  `transfer.sh`, …), and `SRC-003` for a download host that matches neither the
+  package's stated upstream (`url=`) nor a known forge — both across `source=()`
+  and `curl`/`wget` in `build()`/`package()`. The auditor prompt now treats
+  unverifiable provenance as a risk and leans `SUSPICIOUS` rather than guessing `OK`.
+
+## [0.6.2] - 2026-06-23
+
+### Fixed
+- Release CI now signs `SHA256SUMS` correctly in GitHub Actions (re-tag of the
+  0.6.1 signing fix).
+
+## [0.6.1] - 2026-06-23
+
+### Fixed
+- Fix GPG signing of the release `SHA256SUMS` in the GitHub Actions workflow.
+
 ## [0.6.0] - 2026-06-23
 
 ### Added
-- **Backend fallback chain.** aurscan now tries every configured backend —
-  environment-detected backends first, then `~/.config/aurscan/llm1.conf …
-  llmN.conf` in order — before failing closed, instead of giving up on the
-  first one. A rate-limited or dead primary backend transparently falls through
-  to the next (Claude → Codex → local model → …). The first *genuine* verdict
-  wins; only an exhausted chain falls closed to `SUSPICIOUS`, exactly as before.
-  Behaviour is unchanged for a single healthy backend (#7, #35).
+- **Backend fallback chain (#7, #35).** aurscan tries every configured backend —
+  environment-detected first, then `~/.config/aurscan/llm1.conf … llmN.conf` in
+  numeric order — before failing closed, instead of giving up on the first. A
+  rate-limited or dead primary transparently falls through to the next. The first
+  *genuine* verdict wins; only an exhausted chain falls closed to `SUSPICIOUS`.
+  Behaviour is unchanged for a single healthy backend. (PR #36 by GeorgelPreput)
 - **Degraded-scan awareness on the build hooks.** A verdict produced by a
-  *fallback* backend (the primary was unavailable) is flagged and annotated. On
-  the unattended build-hook path a fallback-produced `OK` is treated as a
-  degraded scan: it requires explicit confirmation on a TTY and fails closed
-  without one, closing the path where forcing the primary backend to fail could
-  route approval to a weaker model. The standalone CLI stays lenient.
-- **Unicode-abuse detection.** New static rules flag bidirectional control
-  characters and zero-width/BOM characters (Trojan Source, CVE-2021-42574),
-  punycode (`xn--`) hosts, and non-ASCII characters inside source URLs
-  (homoglyph host impersonation). The auditor prompt now also reasons about
-  visual look-alike hosts and percent-encoded control characters, which static
-  rules cannot decode. The VCS-host extractor was widened so a homoglyph host is
-  reported in full rather than truncated.
-- **Native yay v13 integration.** `aurscan --install-yay-hook` registers an
-  `AURPostDownload` Lua hook in `~/.config/yay/init.lua`, so plain `yay` (v13+)
-  scans every AUR package after `makepkg --verifysource` and before build — no
-  editor hijacking, and the scanner sees the *downloaded sources*, not just the
-  PKGBUILD. Existing `init.lua` is preserved; remove with `--uninstall-yay-hook`.
-  For yay < 13, keep using the `syay` wrapper.
-
-### Changed
-- The OpenAI-compatible backend no longer sends a `model` field when
-  `AURSCAN_OPENAI_MODEL` is unset (previously it sent the placeholder
-  `default-model`). This lets a routing proxy such as LiteLLM select the model
-  itself, so models can be switched at the proxy without editing env vars or
-  restarting. Set `AURSCAN_OPENAI_MODEL` to pin a specific model on servers that
-  require one.
+  *fallback* backend is flagged and annotated; on the unattended build-hook path a
+  fallback-produced `OK` requires explicit confirmation on a TTY and fails closed
+  without one, closing the path where forcing the primary to fail could route
+  approval to a weaker model. The standalone CLI stays lenient.
+- **Unicode-abuse detection.** Static rules flag bidirectional control and
+  zero-width/BOM characters (Trojan Source, CVE-2021-42574), punycode (`xn--`)
+  hosts, and non-ASCII characters in source URLs (homoglyph host impersonation);
+  the auditor prompt reasons about look-alike hosts and percent-encoded control
+  characters too.
 
 ### Security
-- **Hardened release binaries (#30).** Release artifacts are now position-
-  independent (PIE) with full RELRO, built as static-PIE via the external linker
-  with the `netgo,osusergo` tags so they stay fully static and portable. UPX
-  packing was dropped: it stripped PIE/RELRO, tripped antivirus scanners, and
-  hurt reproducibility for a negligible size win on an on-demand CLI. Downstream
-  `-bin` packages now pass `namcap` cleanly.
-- **Signed release checksums (#31).** Release CI publishes a `SHA256SUMS` file
-  and a detached `SHA256SUMS.asc`, signed with the same key that signs the
-  release tags, so downloaded binaries can be verified independently of GitHub
-  transport.
+- **Hardened release binaries (#30).** Release artifacts are PIE with full RELRO,
+  built as static-PIE via the external linker with `netgo,osusergo` so they stay
+  fully static and portable. UPX was dropped (it stripped PIE/RELRO, tripped AV,
+  and hurt reproducibility). Downstream `-bin` packages pass `namcap` cleanly.
+- **Signed release checksums (#31).** Release CI publishes `SHA256SUMS` and a
+  detached `SHA256SUMS.asc`, signed with the release-tag key, so binaries can be
+  verified independently of GitHub transport.
 
 ### Fixed
 - **Coloured output on the paru hook path (#34).** Colour is re-enabled against
-  the controlling terminal when paru runs the hook with stdout redirected, and a
-  `FORCE_COLOR` escape hatch was added. The "no colour with the Codex
-  backend" report was in fact the paru path, not the backend. (reported by
-  HaleTom)
-- **`syay` is operation-aware.** Non-build yay operations (`--version`, `-Ss`
-  search, `-Q` queries, `-Sy` refresh, …) pass straight through; the editor gate
-  is injected only when yay actually fetches and builds a package, making
-  `alias yay=syay` a safe drop-in. (PR by musqz)
-- **`yay -Qua` exit 1 handled.** A `1` exit meaning "no pending AUR updates" is
-  treated as an empty result rather than an error, so `--update-check` and
-  `--gen-file` no longer fail on an up-to-date system. (PR by musqz)
-- **paru interactive build decision now works (#3).** The `--prebuild` hook
-  prompts over `/dev/tty`, so you can abort or override a flagged package even
-  though paru runs `PreBuildCommand` with redirected stdio. With no controlling
-  terminal (CI) it fails closed as before. (reported by Xaero252)
-- **`--install-paru-hook` no longer shadows a system config (#3).** It now
-  writes to the user config and, when creating a fresh one while `/etc/paru.conf`
-  exists, `Include`s the system file first so existing settings are preserved.
-  Install/uninstall consistently target the user config and never need root.
-  (reported by rynti)
+  the controlling terminal when paru runs the hook with stdout redirected; a
+  `FORCE_COLOR` escape hatch was added. The "no colour with Codex" report was the
+  paru path, not the backend. (reported by HaleTom)
+- **`syay` is operation-aware (#27).** Non-build yay operations pass straight
+  through; the editor gate is injected only when yay actually builds a package,
+  making `alias yay=syay` a safe drop-in. (PR by musqz)
+- **`yay -Qua` exit 1 handled (#26).** Exit 1 meaning "no pending AUR updates" is
+  treated as empty rather than an error, so `--update-check` / `--gen-file` no
+  longer fail on an up-to-date system. (PR by musqz)
 
-### Packaging
-- **`aur-sync` workflow.** On a new release tag, CI refreshes the `pkgver` and
-  `.SRCINFO` of the AUR packages so non-devel helper users are prompted to
-  update. It only bumps version metadata and never rewrites the PKGBUILD body.
+## [0.5.2] - 2026-06-21
 
+### Changed
+- `install.sh` advertises the native hooks and gives a version-aware yay hint
+  (`--install-yay-hook` for yay v13+, the `syay` alias for older yay).
+
+## [0.5.1] - 2026-06-21
+
+### Added
+- Warn when an old wrapper alias is made redundant by `--install-yay-hook` /
+  `--install-paru-hook`.
+
+## [0.5.0] - 2026-06-21
+
+### Added
+- **Native yay v13 integration.** `aurscan --install-yay-hook` registers an
+  `AURPostDownload` Lua hook in `~/.config/yay/init.lua`, so plain `yay` (v13+)
+  scans every AUR package after `makepkg --verifysource` and before build. Remove
+  with `--uninstall-yay-hook`; for yay < 13 keep using `syay`.
+
+### Changed
+- The OpenAI-compatible backend omits the `model` field when
+  `AURSCAN_OPENAI_MODEL` is unset, so a routing proxy (LiteLLM, …) can pick the
+  model. Set it to pin a specific model. (PR #22 by magillos)
+
+## [0.4.2] - 2026-06-20
+
+### Added
+- API key for the OpenAI-compatible backend via `AURSCAN_OPENAI_API_KEY` /
+  `OPENAI_API_KEY`, for proxies like LiteLLM (#13).
+
+### Fixed
+- **paru interactive build gate (#3).** The `--prebuild` hook prompts over
+  `/dev/tty` so a flagged package can be aborted or overridden even though paru
+  runs `PreBuildCommand` with redirected stdio; with no terminal it fails closed.
+  `--install-paru-hook` writes the user config and `Include`s `/etc/paru.conf`
+  instead of shadowing it. (reported by Xaero252, rynti)
+- Flush buffered terminal input before the confirmation prompt.
 
 ## [0.4.1] - 2026-06-18
 
