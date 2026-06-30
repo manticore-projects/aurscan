@@ -41,11 +41,18 @@ func WriteReport(r scan.Result) string {
 func offerReport(r scan.Result, prompt func(string) string) {
 	path := WriteReport(r)
 	subject := "[SECURITY] Possibly malicious AUR package: " + r.Pkg
+	w := TerminalWidth()
 	fmt.Println()
 	fmt.Println(Bold("Report drafted: ") + path)
-	fmt.Printf("  1. Review it, then email it to %s\n", Bold(ReportTo))
-	fmt.Println("  2. Also file a deletion request on the AUR web page:")
-	fmt.Printf("     "+pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'\n", r.Pkg)
+	fmt.Println("  1. " + WrapLine(
+		"Review it, then email it to "+Bold(ReportTo),
+		w-len(IndentReport), IndentReport))
+	fmt.Println("  2. " + WrapLine(
+		"Also file a deletion request on the AUR web page:",
+		w-len(IndentReport), IndentReport))
+	fmt.Println(IndentReport + WrapLine(
+		fmt.Sprintf(pkgURLFmt+"  ->  'Submit Request' -> 'Deletion'", r.Pkg),
+		w-len(IndentReport), IndentReport))
 	if _, err := exec.LookPath("xdg-email"); err == nil && prompt != nil {
 		if strings.ToLower(strings.TrimSpace(prompt("  Open your mail client now? [y/N] "))) == "y" {
 			body, _ := os.ReadFile(path)

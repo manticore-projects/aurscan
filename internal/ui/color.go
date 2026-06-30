@@ -47,6 +47,7 @@ func color(code, s string) string {
 func Red(s string) string    { return color("1;31", s) }
 func Yellow(s string) string { return color("1;33", s) }
 func Green(s string) string  { return color("1;32", s) }
+func White(s string) string  { return color("1;37", s) }
 func Bold(s string) string   { return color("1", s) }
 func Dim(s string) string    { return color("2", s) }
 

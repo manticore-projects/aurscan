@@ -15,33 +15,50 @@ func Progress(pkg string, nfiles int) {
 	fmt.Println(Dim(fmt.Sprintf("  scanning %s (%d files) ...", pkg, nfiles)))
 }
 
-func sevColor(sev, s string) string {
+func SevColor(sev, s string) string {
 	switch sev {
 	case "critical":
 		return Red(s)
 	case "warning":
 		return Yellow(s)
+	case "info":
+		return White(s)
 	}
 	return Dim(s)
 }
 
+func VerdictBadge(verdict string) string {
+	switch verdict {
+	case "OK":
+		return Green("  OK  ")
+	case "SUSPICIOUS":
+		return Yellow(" SUSP ")
+	case "MALICIOUS":
+		return Red(" MAL! ")
+	default:
+		return verdict
+	}
+}
+
 func printVerdict(r scan.Result) {
-	badge := map[string]string{
-		"OK": Green("  OK  "), "SUSPICIOUS": Yellow(" SUSP "), "MALICIOUS": Red(" MAL! "),
-	}[r.V.Verdict]
+	badge := VerdictBadge(r.V.Verdict)
 	fmt.Printf("[%s] %s  %s\n", badge, Bold(r.Pkg),
 		Dim(fmt.Sprintf("confidence %.0f%%", r.V.Confidence)))
+	w := TerminalWidth()
 	if r.V.Summary != "" {
-		fmt.Printf("         %s\n", r.V.Summary)
+		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 	}
 	for _, f := range r.V.Findings {
-		fmt.Printf("         %s %s: %s\n", sevColor(f.Severity, "["+f.Severity+"]"), f.File, f.Why)
+		prefixLen := FindingPrefixLen(f.Severity, f.File)
+		fmt.Printf("  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
+			WrapLine(f.Why, w-prefixLen, IndentBody))
 		if f.Quote != "" {
-			q := f.Quote
-			if len(q) > 120 {
-				q = q[:120]
+			wrapped := WrapLine("> "+f.Quote, w-len(IndentQuote), IndentQuote)
+			lines := strings.Split(wrapped, "\n")
+			lines[0] = IndentBody + lines[0]
+			for _, line := range lines {
+				fmt.Println(Dim(line))
 			}
-			fmt.Println(Dim("             > " + q))
 		}
 	}
 }
@@ -109,11 +126,12 @@ func summarize(results []scan.Result) string {
 	worst := "OK"
 	var session scan.Usage
 	calls := 0
+	w := TerminalWidth()
 	fmt.Println()
 	for _, r := range results {
 		printVerdict(r)
 		if r.Usage.In > 0 || r.Usage.Out > 0 || r.Usage.HaveCost {
-			fmt.Println(Dim("         ↳ " + r.Usage.String()))
+			fmt.Println(Dim(IndentBody + WrapLine("↳ "+r.Usage.String(), w-len(IndentUsage), IndentUsage)))
 			session.Add(r.Usage)
 			calls++
 		}
@@ -124,7 +142,9 @@ func summarize(results []scan.Result) string {
 
 	fmt.Println()
 	if calls > 0 {
-		fmt.Println(Dim(fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String())))
+		fmt.Println(Dim(WrapLine(
+			fmt.Sprintf("scanner usage: %d call(s) · %s", calls, session.String()),
+			w, "")))
 	}
 	return worst
 }
@@ -134,12 +154,14 @@ func summarize(results []scan.Result) string {
 // stdio may not be a usable TTY: any non-OK verdict blocks (fail-closed).
 func Decide(results []scan.Result, strict bool) bool {
 	summarize(results)
+	w := TerminalWidth()
 	if autoPass(results, strict) {
 		fmt.Println(Green("All scanned packages look clean.") +
 			Dim("  (heuristic scan — not a guarantee)"))
 		return true
 	}
-	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")), blockLine(results, strict))
+	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")),
+		WrapLine(blockLine(results, strict), w-prefixBlockDecide, IndentBlock))
 	return false
 }
 
@@ -152,19 +174,24 @@ func Decide(results []scan.Result, strict bool) bool {
 // /dev/tty so the user can still decide interactively even though paru runs the
 // hook with redirected stdio. Returns true only if the user approves the build.
 func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bool {
+	w := TerminalWidth()
 	for _, r := range results {
-		fmt.Fprintf(out, "%s %s (confidence %.0f%%)\n", r.V.Verdict, r.Pkg, r.V.Confidence)
+		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n",
+			VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
-			fmt.Fprintf(out, "  %s\n", r.V.Summary)
+			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 		}
 		for _, f := range r.V.Findings {
-			fmt.Fprintf(out, "  [%s] %s: %s\n", f.Severity, f.File, f.Why)
+			prefixLen := FindingPrefixLen(f.Severity, f.File)
+			fmt.Fprintf(out, "  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
+				WrapLine(f.Why, w-prefixLen, IndentBody))
 		}
 	}
 	if autoPass(results, strict) {
 		return true
 	}
-	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ", blockLine(results, strict))
+	fmt.Fprintf(out, "%s%s\n", "!! Build blocked: ",
+		WrapLine(blockLine(results, strict), w-prefixBlockGateVia, IndentBlock))
 
 	br := bufio.NewReader(in)
 	tty, _ := in.(*os.File) // for input flushing when reading from /dev/tty
@@ -190,6 +217,7 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 func Gate(results []scan.Result, strict bool) bool {
 	summarize(results)
 
+	w := TerminalWidth()
 	if autoPass(results, strict) {
 		fmt.Println(Green("All scanned packages look clean.") +
 			Dim("  (heuristic scan — not a guarantee)"))
@@ -197,7 +225,8 @@ func Gate(results []scan.Result, strict bool) bool {
 	}
 
 	flagged := flaggedSet(results, strict)
-	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")), blockLine(results, strict))
+	fmt.Printf("%s%s\n", Red(Bold("!! Installation blocked: ")),
+		WrapLine(blockLine(results, strict), w-prefixBlockGate, IndentBlock))
 
 	if !IsTTY(os.Stdin) {
 		return false
