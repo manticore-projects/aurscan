@@ -74,28 +74,52 @@ aurscan ships its own signed pacman repository, so `yay`/`paru` install and
 upgrade it exactly like any other package — no toolchain, no AUR account, no
 rebuild on every release.
 
-**1. Trust the signing key** (once):
-
-```bash
-sudo pacman-key --recv-keys 61E73AA7539ACB261ABCF10C188331308EF56D11
-sudo pacman-key --lsign-key  61E73AA7539ACB261ABCF10C188331308EF56D11
-```
-
-If your keyserver is unreachable, fetch the key over HTTPS instead:
+**1. Trust the signing key** (once). Fetch it over HTTPS from the same host that
+serves the repository:
 
 ```bash
 curl -fsSL https://manticore-projects.github.io/aurscan/aurscan.gpg |
-  sudo pacman-key --add - &&
-  sudo pacman-key --lsign-key 61E73AA7539ACB261ABCF10C188331308EF56D11
+  sudo pacman-key --add -
+sudo pacman-key --lsign-key 61E73AA7539ACB261ABCF10C188331308EF56D11
 ```
 
-**2. Add the repository** — append to the end of `/etc/pacman.conf`:
+Or from a keyserver, if you prefer:
+
+```bash
+sudo pacman-key --recv-keys 61E73AA7539ACB261ABCF10C188331308EF56D11 \
+  --keyserver hkps://keyserver.ubuntu.com
+sudo pacman-key --lsign-key 61E73AA7539ACB261ABCF10C188331308EF56D11
+```
+
+> Keyservers are best-effort and frequently unreachable. If `--recv-keys` fails
+> with *"Server indicated a failure"*, check what your system is querying with
+> `grep -i '^keyserver ' /etc/pacman.d/gnupg/gpg.conf` — installs from before
+> 2021 often still point at `pool.sks-keyservers.net`, which no longer exists.
+> Use the HTTPS route above instead.
+
+What establishes trust either way is the **fingerprint**, not the transport. It
+is the same key that signs the release checksums on every GitHub release, so you
+can cross-check it against `SHA256SUMS.asc` there.
+
+**2. Add the repository** to the end of `/etc/pacman.conf`. Safe to re-run — it
+does nothing if the section is already there:
+
+```bash
+grep -q '^\[manticore\]' /etc/pacman.conf ||
+  printf '\n[manticore]\nSigLevel = Required DatabaseOptional\nServer = https://manticore-projects.github.io/aurscan/$arch\n' |
+  sudo tee -a /etc/pacman.conf
+```
+
+Which appends:
 
 ```ini
 [manticore]
 SigLevel = Required DatabaseOptional
 Server = https://manticore-projects.github.io/aurscan/$arch
 ```
+
+Appending puts it last, so official repositories keep precedence over it. Leave
+`$arch` exactly as written — pacman expands it, your shell must not.
 
 **3. Install:**
 
