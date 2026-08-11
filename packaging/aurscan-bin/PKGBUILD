@@ -1,0 +1,94 @@
+# Maintainer: Andreas Reichel <aurscan at manticore-projects dot com>
+# Contributor: Tom Hale <tom at hale dot ee>
+
+pkgname=aurscan-bin
+_pkgname=aurscan
+pkgver=0.7.1
+pkgrel=1
+pkgdesc='LLM-powered pre-build malware scanner for AUR packages (with paru / yay hooks)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/manticore-projects/aurscan'
+license=('Apache-2.0')
+provides=("${_pkgname}=${pkgver}")
+conflicts=("${_pkgname}")
+optdepends=(
+  'paru: sparu wrapper, PreBuildCommand hook, and --update-check'
+  'yay: syay wrapper, editor-gate hook, and --update-check'
+  'claude-code: keyless backend via your Claude subscription'
+  'openai-codex: keyless backend via your Codex subscription'
+  'xdg-utils: open mail client for mailing-list reports'
+)
+# Upstream ships stripped static-pie binaries; do not re-strip or split debug.
+options=('!strip' '!debug')
+
+_relurl="${url}/releases/download/v${pkgver}"
+_rawurl="https://raw.githubusercontent.com/manticore-projects/${_pkgname}/v${pkgver}"
+
+# The detached signature is checked by makepkg against validpgpkeys, which
+# authenticates SHA256SUMS. check() then confirms the binary pinned below
+# matches that signed manifest, so a tampered AUR repo alone is not enough.
+validpgpkeys=('61E73AA7539ACB261ABCF10C188331308EF56D11') # Andreas Reichel <aurscan@manticore-projects.com>
+
+source=("${_pkgname}-${pkgver}-SHA256SUMS::${_relurl}/SHA256SUMS"
+        "${_pkgname}-${pkgver}-SHA256SUMS.asc::${_relurl}/SHA256SUMS.asc"
+        "${_pkgname}-${pkgver}-LICENSE::${_rawurl}/LICENSE"
+        "${_pkgname}-${pkgver}-README.md::${_rawurl}/README.md")
+sha256sums=('4b73f130575eafa5264f6d687017e69233bd91686614580eb8c4eb8b8a4e15b0' # SHA256SUMS
+            'SKIP'                                                             # signature, checked via validpgpkeys
+            '243002447e0a20ae5ce6e671dba969881c67f110cccae5c4c9f553087709a7a5' # LICENSE
+            '21ed74e32d1a8135ace50f1a1d5bd42221c49e351b39b463ae6bc591a547eb0f') # README.md
+
+source_x86_64=("${_pkgname}-${pkgver}-x86_64::${_relurl}/aurscan-linux-amd64")
+sha256sums_x86_64=('228f7a870fa2979d810d616cbd841bfef9aabb5ab8e9efff066b10c68a342f71')
+
+source_aarch64=("${_pkgname}-${pkgver}-aarch64::${_relurl}/aurscan-linux-arm64")
+sha256sums_aarch64=('be8d1c341f4ae793f45603053a488f02ed3ac96422b86fdf69a9cff824962ff6')
+
+_asset_name() {
+  case "$CARCH" in
+    x86_64)  printf '%s' 'aurscan-linux-amd64' ;;
+    aarch64) printf '%s' 'aurscan-linux-arm64' ;;
+    *)       return 1 ;;
+  esac
+}
+
+check() {
+  cd "$srcdir"
+
+  local _asset _want _have
+  _asset="$(_asset_name)"
+
+  _want="$(awk -v a="$_asset" '$2 == a { print $1 }' \
+    "${_pkgname}-${pkgver}-SHA256SUMS")"
+  if [[ -z $_want ]]; then
+    printf '%s not listed in the signed SHA256SUMS manifest\n' "$_asset" >&2
+    return 1
+  fi
+
+  _have="$(sha256sum < "${_pkgname}-${pkgver}-${CARCH}" | cut -d' ' -f1)"
+  if [[ $_want != "$_have" ]]; then
+    printf 'checksum mismatch for %s: signed %s, got %s\n' \
+      "$_asset" "$_want" "$_have" >&2
+    return 1
+  fi
+
+  printf 'v%s %s matches the signed manifest\n' "$pkgver" "$_asset"
+}
+
+package() {
+  cd "$srcdir"
+
+  install -Dm755 "${_pkgname}-${pkgver}-${CARCH}" "${pkgdir}/usr/bin/${_pkgname}"
+
+  local _link
+  for _link in syay sparu aurscan-edit; do
+    ln -s "$_pkgname" "${pkgdir}/usr/bin/${_link}"
+  done
+
+  install -Dm644 "${_pkgname}-${pkgver}-LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 "${_pkgname}-${pkgver}-README.md" \
+    "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
+
+# vim:set ts=2 sw=2 et ft=PKGBUILD:

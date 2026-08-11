@@ -1,0 +1,78 @@
+# Maintainer: Andreas Reichel <aurscan at manticore-projects dot com>
+
+pkgname=aurscan-git
+_pkgname=aurscan
+pkgver=0.7.1.r4.g748cfc5
+pkgrel=1
+pkgdesc='LLM-powered pre-build malware scanner for AUR packages (git master)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/manticore-projects/aurscan'
+license=('Apache-2.0')
+depends=('glibc')
+makedepends=('git' 'go')
+provides=("${_pkgname}=${pkgver}")
+conflicts=("${_pkgname}")
+optdepends=(
+  'paru: sparu wrapper, PreBuildCommand hook, and --update-check'
+  'yay: syay wrapper, editor-gate hook, and --update-check'
+  'claude-code: keyless backend via your Claude subscription'
+  'openai-codex: keyless backend via your Codex subscription'
+  'xdg-utils: open mail client for mailing-list reports'
+)
+options=('!lto')
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+_pkgpath='github.com/manticore-projects/aurscan/internal/version'
+
+pkgver() {
+  cd "$_pkgname"
+  git describe --long --abbrev=7 --tags \
+    | sed 's/^v//; s/\([^-]*-g\)/r\1/; s/-/./g'
+}
+
+prepare() {
+  cd "$_pkgname"
+  mkdir -p build
+}
+
+build() {
+  cd "$_pkgname"
+
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  export GOFLAGS='-buildmode=pie -trimpath -mod=vendor -modcacherw'
+
+  local _date
+  _date="$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)"
+
+  go build -o build/ \
+    -ldflags "-linkmode=external -compressdwarf=false \
+      -X ${_pkgpath}.Version=v${pkgver} \
+      -X ${_pkgpath}.Commit=$(git rev-parse --short=7 HEAD) \
+      -X ${_pkgpath}.Date=${_date}" \
+    ./cmd/aurscan
+}
+
+check() {
+  cd "$_pkgname"
+  go test ./...
+}
+
+package() {
+  cd "$_pkgname"
+
+  install -Dm755 build/aurscan "${pkgdir}/usr/bin/${_pkgname}"
+
+  local _link
+  for _link in syay sparu aurscan-edit; do
+    ln -s "$_pkgname" "${pkgdir}/usr/bin/${_link}"
+  done
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
+
+# vim:set ts=2 sw=2 et ft=PKGBUILD:

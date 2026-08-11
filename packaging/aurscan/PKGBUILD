@@ -1,0 +1,72 @@
+# Maintainer: Andreas Reichel <aurscan at manticore-projects dot com>
+# Contributor: Tom Hale <tom at hale dot ee>
+
+pkgname=aurscan
+pkgver=0.7.1
+pkgrel=1
+pkgdesc='LLM-powered pre-build malware scanner for AUR packages (with paru / yay hooks)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/manticore-projects/aurscan'
+license=('Apache-2.0')
+depends=('glibc')
+makedepends=('go')
+optdepends=(
+  'paru: sparu wrapper, PreBuildCommand hook, and --update-check'
+  'yay: syay wrapper, editor-gate hook, and --update-check'
+  'claude-code: keyless backend via your Claude subscription'
+  'openai-codex: keyless backend via your Codex subscription'
+  'xdg-utils: open mail client for mailing-list reports'
+)
+options=('!lto')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('3081bf850416534dac439a8d151990f9f67c5584e3370b3fe9da8694c7100092')
+
+_pkgpath='github.com/manticore-projects/aurscan/internal/version'
+
+prepare() {
+  cd "${pkgname}-${pkgver}"
+  mkdir -p build
+}
+
+build() {
+  cd "${pkgname}-${pkgver}"
+
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  # Dependencies are vendored in the release tarball, so the build is offline.
+  export GOFLAGS='-buildmode=pie -trimpath -mod=vendor -modcacherw'
+
+  # Release tarballs carry no .git, so stamp the version from $pkgver and
+  # derive the build date from SOURCE_DATE_EPOCH to stay reproducible.
+  local _date
+  _date="$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y-%m-%dT%H:%M:%SZ)"
+
+  go build -o build/ \
+    -ldflags "-linkmode=external -compressdwarf=false \
+      -X ${_pkgpath}.Version=v${pkgver} \
+      -X ${_pkgpath}.Date=${_date}" \
+    ./cmd/aurscan
+}
+
+check() {
+  cd "${pkgname}-${pkgver}"
+  go test ./...
+}
+
+package() {
+  cd "${pkgname}-${pkgver}"
+
+  install -Dm755 build/aurscan "${pkgdir}/usr/bin/${pkgname}"
+
+  local _link
+  for _link in syay sparu aurscan-edit; do
+    ln -s "$pkgname" "${pkgdir}/usr/bin/${_link}"
+  done
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}
+
+# vim:set ts=2 sw=2 et ft=PKGBUILD:

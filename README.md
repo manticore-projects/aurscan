@@ -9,7 +9,7 @@ A Claude, Codex, or local model reads the `PKGBUILD` for you and blocks the buil
 [![GitHub stars](https://img.shields.io/github/stars/manticore-projects/aurscan?style=flat&logo=github&color=ff420e)](https://github.com/manticore-projects/aurscan/stargazers)
 [![CI](https://github.com/manticore-projects/aurscan/actions/workflows/ci.yml/badge.svg)](https://github.com/manticore-projects/aurscan/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/manticore-projects/aurscan?sort=semver)](https://github.com/manticore-projects/aurscan/releases)
-[![AUR](https://img.shields.io/aur/version/aurscan-manticore-release-git?logo=archlinux&logoColor=white&label=AUR)](https://aur.archlinux.org/packages/aurscan-manticore-release-git)
+[![pacman repo](https://img.shields.io/badge/pacman%20repo-manticore-1793D1?logo=archlinux&logoColor=white)](https://manticore-projects.github.io/aurscan/)
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Go Report Card](https://goreportcard.com/badge/github.com/manticore-projects/aurscan)](https://goreportcard.com/report/github.com/manticore-projects/aurscan)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -68,27 +68,64 @@ aurscan is built for exactly this: the unfamiliar trick, not just the one you ha
 
 ## Install
 
-### From the AUR (recommended)
+### With yay or paru (recommended)
 
-aurscan is on the AUR in two variants, both maintained by [@HaleTom](https://github.com/HaleTom) ([#21](https://github.com/manticore-projects/aurscan/issues/21)):
+aurscan ships its own signed pacman repository, so `yay`/`paru` install and
+upgrade it exactly like any other package — no toolchain, no AUR account, no
+rebuild on every release.
 
-| Package | Description |
-|---|---|
-| [`aurscan-manticore-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-release-git) | Builds from source (needs Go); tracks the latest release tag |
-| [`aurscan-manticore-bin-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-bin-release-git) | Installs latest pre-built release binaries (no Go needed). Uses git to determine the latest release. |
-
-Note:
-- Despite the `-git` suffix, both track the latest **release tag**, not bleeding-edge `main` — this is required by the AUR packaging guidelines for packages that aren't pinned to a particular version.
-- A pinned-version `aurscan-manticore-bin` package is planned (help wanted for CI to auto-generate it).
+**1. Trust the signing key** (once):
 
 ```bash
-pkg=aurscan-manticore-release-git       # build from source
-# or (recommended):
-pkg=aurscan-manticore-bin-release-git   # pre-built binaries, no toolchain needed
-paru -S "$pkg" || yay -S "$pkg"
+sudo pacman-key --recv-keys 61E73AA7539ACB261ABCF10C188331308EF56D11
+sudo pacman-key --lsign-key  61E73AA7539ACB261ABCF10C188331308EF56D11
 ```
 
-### From source
+If your keyserver is unreachable, fetch the key over HTTPS instead:
+
+```bash
+curl -fsSL https://manticore-projects.github.io/aurscan/aurscan.gpg |
+  sudo pacman-key --add - &&
+  sudo pacman-key --lsign-key 61E73AA7539ACB261ABCF10C188331308EF56D11
+```
+
+**2. Add the repository** — append to the end of `/etc/pacman.conf`:
+
+```ini
+[manticore]
+SigLevel = Required DatabaseOptional
+Server = https://manticore-projects.github.io/aurscan/$arch
+```
+
+**3. Install:**
+
+```bash
+yay -Syu aurscan-bin      # or: paru -Syu aurscan-bin  ·  sudo pacman -Syu aurscan-bin
+```
+
+From here `yay -Syu` keeps aurscan current along with everything else. `x86_64`
+and `aarch64` are both published, and every package plus the repository database
+is signed with the same key that signs the release checksums.
+
+> Adding any third-party repository grants it root-level trust for anything it
+> ships. `SigLevel = Required` means pacman rejects anything not signed by the
+> key you locally signed above; the repository cannot be narrowed to specific
+> package names, so add it only if you're willing to extend that trust.
+
+### From source, with makepkg
+
+Prefer to compile it yourself? The PKGBUILD lives in this repository:
+
+```bash
+git clone https://github.com/manticore-projects/aurscan
+makepkg -si -D aurscan/packaging/aurscan      # needs Go; builds offline (deps vendored)
+```
+
+Updates are `git pull` then the same `makepkg -si`. There is also
+`packaging/aurscan-git` if you want to track `master` rather than the latest
+release.
+
+### From source, without pacman
 
 ```bash
 git clone https://github.com/manticore-projects/aurscan
@@ -98,7 +135,16 @@ cd aurscan
 #   uninstall: ./install.sh --uninstall
 ```
 
-Both routes install **one static binary** under four names: `aurscan` (the CLI), `syay` (the yay wrapper), `sparu` (the paru wrapper), and `aurscan-edit` (the editor gate the wrappers invoke).
+All routes install **one static binary** under four names: `aurscan` (the CLI),
+`syay` (the yay wrapper), `sparu` (the paru wrapper), and `aurscan-edit` (the
+editor gate the wrappers invoke).
+
+> **Not on the AUR.** aurscan was previously published as
+> `aurscan-manticore-release-git` and `aurscan-manticore-bin-release-git`. Those
+> packages misused the `-git` suffix — they resolved the newest release tag at
+> build time rather than tracking a VCS branch, which the
+> [VCS package guidelines](https://wiki.archlinux.org/title/VCS_package_guidelines)
+> do not permit — and were removed. The repository above replaces them.
 
 ### Turn it on
 
@@ -432,7 +478,7 @@ Issues and PRs are welcome. `make test` runs `go vet` and the unit tests; CI run
 
 ## Acknowledgements
 
-- AUR packages [`aurscan-manticore-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-release-git) (build from source) and [`aurscan-manticore-bin-release-git`](https://aur.archlinux.org/packages/aurscan-manticore-bin-release-git) (pre-built binaries) maintained by [@HaleTom](https://github.com/HaleTom).
+- Original AUR packaging by [@HaleTom](https://github.com/HaleTom) ([#21](https://github.com/manticore-projects/aurscan/issues/21)).
 - Static-rule catalog adapted from [KiefStudioMA/ks-aur-scanner](https://github.com/KiefStudioMA/ks-aur-scanner) (GPL-3.0).
 - Local-LLM backend generalised from [@alexzk1's connector](https://github.com/manticore-projects/aurscan/issues/1).
 
