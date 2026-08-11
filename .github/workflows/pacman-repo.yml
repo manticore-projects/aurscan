@@ -93,14 +93,16 @@ jobs:
           echo "Will sign with: $key"
 
       - name: build packages for both architectures
-        env:
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           install -d -o builder -g builder /tmp/pkgout
 
           # aurscan-bin only repackages upstream's prebuilt binaries — nothing
           # is compiled — so the aarch64 package can be assembled on an x86_64
           # runner simply by overriding CARCH.
+          #
+          # Note: no --sign here. makepkg signs via `gpg --use-agent` with no
+          # way to supply a passphrase, which cannot work unattended. Packages
+          # are signed explicitly in the next step instead.
           for arch in x86_64 aarch64; do
             sed -e "s|^CARCH=.*|CARCH=\"$arch\"|" \
                 -e "s|^CHOST=.*|CHOST=\"$arch-unknown-linux-gnu\"|" \
@@ -108,24 +110,54 @@ jobs:
             chmod 0644 "/tmp/makepkg-$arch.conf"
 
             sudo -u builder \
-              env PKGDEST=/tmp/pkgout GPGKEY="$SIGN_KEY" \
-                  GPG_PASSPHRASE="$GPG_PASSPHRASE" \
+              env PKGDEST=/tmp/pkgout HOME=/home/builder \
               makepkg --config "/tmp/makepkg-$arch.conf" \
-                      --clean --cleanbuild --noconfirm --sign \
+                      --clean --cleanbuild --noconfirm \
                       -D packaging/aurscan-bin
           done
           ls -l /tmp/pkgout
 
-      - name: assemble the pacman repository
+      - name: sign the packages
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
+          # Detached, binary signatures — what pacman expects alongside each
+          # package. Must happen before repo-add, which folds an existing .sig
+          # into the database as the package's PGPSIG field.
+          for pkg in /tmp/pkgout/*.pkg.tar.zst; do
+            sudo -u builder env HOME=/home/builder GPG_PASSPHRASE="$GPG_PASSPHRASE" \
+              gpg --batch --yes --pinentry-mode loopback \
+                  ${GPG_PASSPHRASE:+--passphrase "$GPG_PASSPHRASE"} \
+                  --local-user "$SIGN_KEY" \
+                  --detach-sign --no-armor --output "$pkg.sig" "$pkg"
+            sudo -u builder env HOME=/home/builder gpg --verify "$pkg.sig" "$pkg"
+            echo "signed $(basename "$pkg")"
+          done
+
+      - name: assemble the pacman repository
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          sign() {
+            sudo -u builder env HOME=/home/builder GPG_PASSPHRASE="$GPG_PASSPHRASE" \
+              gpg --batch --yes --pinentry-mode loopback \
+                  ${GPG_PASSPHRASE:+--passphrase "$GPG_PASSPHRASE"} \
+                  --local-user "$SIGN_KEY" \
+                  --detach-sign --no-armor --output "$1.sig" "$1"
+          }
+
           for arch in x86_64 aarch64; do
             install -d -o builder -g builder "site/$arch"
             cp /tmp/pkgout/*-"$arch".pkg.tar.zst*  "site/$arch/"
             chown -R builder:builder site
 
-            sudo -u builder env GPGKEY="$SIGN_KEY" \
-              repo-add --sign --key "$SIGN_KEY" --new --remove \
+            # No --sign: repo-add signs through the agent too. Sign after.
+            sudo -u builder env HOME=/home/builder \
+              repo-add --new --remove \
                 "site/$arch/$REPO_NAME.db.tar.gz" "site/$arch/"*.pkg.tar.zst
+
+            sign "site/$arch/$REPO_NAME.db.tar.gz"
+            sign "site/$arch/$REPO_NAME.files.tar.gz"
 
             # repo-add leaves .db/.files as symlinks; GitHub Pages does not
             # serve those, so replace them with real files.
@@ -144,7 +176,7 @@ jobs:
 
       - name: publish the signing key alongside the repository
         run: |
-          sudo -u builder gpg --armor --export "$SIGN_KEY" > site/aurscan.gpg
+          sudo -u builder env HOME=/home/builder gpg --armor --export "$SIGN_KEY" > site/aurscan.gpg
           echo "$SIGN_KEY" > site/SIGNING_KEY_FINGERPRINT
 
       - name: commit the synced PKGBUILDs
