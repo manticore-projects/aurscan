@@ -211,6 +211,10 @@ func EditHook(paths []string) {
 	var results []scan.Result
 	for d := range dirs {
 		name := filepath.Base(d)
+		if pipeline.Disabled() {
+			results = append(results, pipeline.SkippedResult(name))
+			continue
+		}
 		files, err := scan.CollectDir(d)
 		if err != nil {
 			results = append(results, scan.Result{

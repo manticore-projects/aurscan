@@ -379,7 +379,7 @@ Buffered keystrokes are flushed right before the prompt, so mashing <kbd>Enter</
 
 ### Script integration
 
-`--score` scans a single target and maps the result to an exit code: the **0–100 trust score** on success (higher is safer; MALICIOUS 0–33, SUSPICIOUS 34–66, OK 67–100), or `255` if the scan could not complete. The score also prints to stdout while the human-readable verdict goes to stderr, so it is clean to capture.
+`--score` scans a single target and maps the result to an exit code: the **0–100 trust score** on success (higher is safer; MALICIOUS 0–33, SUSPICIOUS 34–66, OK 67–100), or `255` if the scan could not complete. The score also prints to stdout while the human-readable verdict goes to stderr, so it is clean to capture. `--score` is a scoring query, not a build hook: it always runs a real scan and ignores `AURSCAN_DISABLE`.
 
 ```bash
 aurscan --score ./PKGBUILD        # exit code = trust score
@@ -419,6 +419,7 @@ aurscan --debug --score ./PKGBUILD
 | `AURSCAN_TIMEOUT` | `180` | per-request budget in **seconds**; raise it for slow CPU-only models |
 | `AURSCAN_INSTRUCTIONS` | — | path to extra auditor instructions (appended) |
 | `AURSCAN_RULES_ONLY` | — | `1` = static rules only, never call a model |
+| `AURSCAN_DISABLE` | — | `1` = skip scanning entirely (build hooks and the plain scan); every package gets an instant `SKIPPED` verdict and exit 0, so builds pass through untouched. `--score` is unaffected and still runs a real scan (re-runs, hash-only changes, or full user control) |
 | `AURSCAN_NO_CACHE` | — | `1` = disable the verdict cache (no read, no write) |
 | `AURSCAN_CACHE_DIR` | `$XDG_CACHE_HOME/aurscan/verdicts` | verdict-cache location |
 | `AURSCAN_CACHE_TTL` | `30` | verdict-cache lifetime in **days**; `0` = never expire |

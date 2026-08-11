@@ -238,6 +238,13 @@ func updateCheck() []scan.Result {
 
 func scanArgs(args []string) []scan.Result {
 	var results []scan.Result
+	if pipeline.Disabled() {
+		for _, a := range args {
+			abs, _ := filepath.Abs(a)
+			results = append(results, pipeline.SkippedResult(filepath.Base(abs)))
+		}
+		return results
+	}
 	var names []string
 	for _, a := range args {
 		if fi, err := os.Stat(a); err == nil && fi.IsDir() {
@@ -266,6 +273,10 @@ func scanArgs(args []string) []scan.Result {
 // printResultStderr writes a concise verdict + findings to stderr so it does
 // not pollute the score on stdout in --score mode.
 func printResultStderr(r scan.Result) {
+	if r.V.Verdict == "SKIPPED" {
+		fmt.Fprintf(os.Stderr, "[%s] %s - %s\n", ui.VerdictBadge(r.V.Verdict), r.Pkg, r.V.Summary)
+		return
+	}
 	w := ui.TerminalWidth()
 	fmt.Fprintf(os.Stderr, "[%s] %s (confidence %.0f%%)\n",
 		ui.VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
@@ -344,7 +355,7 @@ func scoreMode(rest []string) int {
 		fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
 		return 255
 	}
-	res := pipeline.Run(name, files, "")
+	res := pipeline.RunScored(name, files, "")
 	// Show the verdict + findings on stderr (does not pollute the score stdout).
 	printResultStderr(res)
 	if res.Failed {

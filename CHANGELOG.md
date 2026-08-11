@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   difference is explainable. The Codex CLI, which exposes no temperature/seed and
   cannot be made reproducible, is documented as such — prefer the `api` backend
   or a seeded local `openai` model when reproducibility matters.
+- **Global kill switch.** `AURSCAN_DISABLE=1` skips scanning entirely — no
+  rules, no model, no cost — and every package passes through with an instant
+  SKIPPED verdict (exit 0). For re-running an interrupted build, hash-only
+  source changes, or plain user control. The kill switch governs the build
+  hooks and the plain scan; `--score` is a scoring query and still runs a real
+  scan.
 
 ### Changed
 - **Deterministic verdict from a fixed checklist (discussion #56, Tier 2).** The

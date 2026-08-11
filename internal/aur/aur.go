@@ -202,6 +202,13 @@ func maxPkgs() int {
 // closure (official-repo deps are skipped). Progress is reported via the
 // optional onScan callback before each package is sent to the model.
 func ScanRecursive(roots []string, onScan func(pkg string, nfiles int)) []scan.Result {
+	if pipeline.Disabled() {
+		results := make([]scan.Result, len(roots))
+		for i, pkg := range roots {
+			results[i] = pipeline.SkippedResult(pkg)
+		}
+		return results
+	}
 	var results []scan.Result
 	queue := append([]string(nil), roots...)
 	seen := map[string]bool{}

@@ -15,8 +15,27 @@ import (
 	"github.com/manticore-projects/aurscan/internal/scan"
 )
 
-// Run scans one package. rep is optional pre-formatted reputation text.
+// Run scans one package, honoring AURSCAN_DISABLE. rep is optional
+// pre-formatted reputation text.
 func Run(pkg string, files scan.Files, rep string) scan.Result {
+	return run(pkg, files, rep, true)
+}
+
+// RunScored scans one package for --score: an explicit scoring query always
+// runs a real scan and ignores AURSCAN_DISABLE — the kill switch governs the
+// yay/paru build hooks and the plain scan gate, not scoring.
+func RunScored(pkg string, files scan.Files, rep string) scan.Result {
+	return run(pkg, files, rep, false)
+}
+
+func run(pkg string, files scan.Files, rep string, honorDisable bool) scan.Result {
+	// Scanning disabled (AURSCAN_DISABLE=1): no rules, no model, no cost —
+	// every package passes through untouched. Useful to re-run an interrupted
+	// build, when only source-hash changes are expected, or for user control.
+	if honorDisable && Disabled() {
+		return SkippedResult(pkg)
+	}
+
 	hits := rules.Scan(files)
 
 	// Forced rules-only mode (AURSCAN_RULES_ONLY=1): skip the model entirely.
@@ -38,6 +57,20 @@ func Run(pkg string, files scan.Files, rep string) scan.Result {
 // (AURSCAN_RULES_ONLY=1) — useful to force the cheap path even when a backend
 // exists, e.g. in tight CI loops.
 func AllowRulesOnly() bool { return os.Getenv("AURSCAN_RULES_ONLY") == "1" }
+
+// Disabled reports whether scanning has been switched off entirely
+// (AURSCAN_DISABLE=1). Every package then gets an immediate SKIPPED verdict, so
+// builds pass through untouched: no rules, no model call, no cost.
+func Disabled() bool { return os.Getenv("AURSCAN_DISABLE") == "1" }
+
+// SkippedResult returns the pass-through result for a disabled scan.
+func SkippedResult(pkg string) scan.Result {
+	return scan.Result{Pkg: pkg, V: scan.Verdict{
+		Verdict:    "SKIPPED",
+		Confidence: 100,
+		Summary:    "scanning disabled (AURSCAN_DISABLE=1)",
+	}}
+}
 
 // RunRulesOnly scans using only the static catalog (no model call, no cost).
 func RunRulesOnly(pkg string, files scan.Files) scan.Result {

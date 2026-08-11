@@ -186,12 +186,12 @@ func UninstallParuHook() (string, bool, error) {
 }
 
 // PrebuildHook is the `aurscan --prebuild <dir>` entrypoint paru invokes via
-// PreBuildCommand. It scans the directory and, on a non-OK verdict, lets the
+// PreBuildCommand. It scans the directory and, on an adverse verdict, lets the
 // user decide interactively. Because paru runs PreBuildCommand with redirected
 // stdio, the prompt is done over /dev/tty (the controlling terminal) rather
 // than stdin/stdout — this is what makes the interactive build decision work
 // under paru (issue #3). With no controlling terminal (CI, non-interactive),
-// it fails closed: any non-OK verdict aborts the build via a non-zero exit.
+// it fails closed: any adverse verdict aborts the build via a non-zero exit.
 func PrebuildHook(args []string) {
 	dir := "."
 	if len(args) > 0 {
@@ -199,6 +199,10 @@ func PrebuildHook(args []string) {
 	}
 	abs, _ := filepath.Abs(dir)
 	name := filepath.Base(abs)
+	if pipeline.Disabled() {
+		ui.Decide([]scan.Result{pipeline.SkippedResult(name)}, true)
+		os.Exit(0)
+	}
 	files, err := scan.CollectDir(dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, ui.Red("aurscan: ")+err.Error()+" (fail-closed)")
@@ -208,7 +212,7 @@ func PrebuildHook(args []string) {
 	res := pipeline.Run(name, files, "")
 	results := []scan.Result{res}
 
-	if res.V.Verdict == "OK" && !res.Fallback {
+	if (res.V.Verdict == "OK" || res.V.Verdict == "SKIPPED") && !res.Fallback {
 		ui.Decide(results, true) // prints the clean line
 		os.Exit(0)
 	}

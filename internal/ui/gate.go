@@ -7,11 +7,17 @@ import (
 	"os"
 	"strings"
 
+	"github.com/manticore-projects/aurscan/internal/pipeline"
 	"github.com/manticore-projects/aurscan/internal/scan"
 )
 
-// Progress prints the "scanning ..." line before a model call.
+// Progress prints the "scanning ..." line before a model call. It is silent
+// while scanning is disabled (AURSCAN_DISABLE=1): nothing is scanned, so
+// nothing is announced.
 func Progress(pkg string, nfiles int) {
+	if pipeline.Disabled() {
+		return
+	}
 	fmt.Println(Dim(fmt.Sprintf("  scanning %s (%d files) ...", pkg, nfiles)))
 }
 
@@ -35,6 +41,8 @@ func VerdictBadge(verdict string) string {
 		return Yellow(" SUSP ")
 	case "MALICIOUS":
 		return Red(" MAL! ")
+	case "SKIPPED":
+		return Dim("SKIPPED")
 	default:
 		return verdict
 	}
@@ -42,6 +50,10 @@ func VerdictBadge(verdict string) string {
 
 func printVerdict(r scan.Result) {
 	badge := VerdictBadge(r.V.Verdict)
+	if r.V.Verdict == "SKIPPED" {
+		fmt.Printf("[%s] %s - %s\n", badge, Bold(r.Pkg), r.V.Summary)
+		return
+	}
 	meta := fmt.Sprintf("confidence %.0f%%", r.V.Confidence)
 	if r.Cached {
 		meta += ", cached"
@@ -66,13 +78,34 @@ func printVerdict(r scan.Result) {
 	}
 }
 
-// autoPass reports whether results may proceed without any prompt. A non-OK
-// verdict never auto-passes. In strict mode (the unattended build-hook path) a
-// fallback-produced OK does not auto-pass either: the primary scanner was
-// unavailable, so a degraded clean verdict still requires confirmation.
+// allSkipped reports whether every result is SKIPPED (AURSCAN_DISABLE=1).
+func allSkipped(results []scan.Result) bool {
+	skipped := false
+	for _, r := range results {
+		if r.V.Verdict != "SKIPPED" {
+			return false
+		}
+		skipped = true
+	}
+	return skipped
+}
+
+// cleanLine is the message printed when the gate lets a build through.
+func cleanLine(results []scan.Result) string {
+	if allSkipped(results) {
+		return Dim("Scanning disabled — all packages skipped.")
+	}
+	return Green("All scanned packages look clean.") +
+		Dim("  (heuristic scan — not a guarantee)")
+}
+
+// autoPass reports whether results may proceed without any prompt. Only OK and
+// explicit SKIPPED results auto-pass. In strict mode (the unattended build-hook
+// path) a fallback-produced OK does not auto-pass either: the primary scanner
+// was unavailable, so a degraded clean verdict still requires confirmation.
 func autoPass(results []scan.Result, strict bool) bool {
 	for _, r := range results {
-		if r.V.Verdict != "OK" {
+		if r.V.Verdict != "OK" && r.V.Verdict != "SKIPPED" {
 			return false
 		}
 		if strict && r.Fallback {
@@ -82,12 +115,12 @@ func autoPass(results []scan.Result, strict bool) bool {
 	return true
 }
 
-// flaggedSet is the set of results that block an auto-pass: every non-OK
-// verdict, plus (in strict mode) any fallback-produced OK.
+// flaggedSet is the set of results that block an auto-pass: every verdict other
+// than OK or explicit SKIPPED, plus (in strict mode) any fallback-produced OK.
 func flaggedSet(results []scan.Result, strict bool) []scan.Result {
 	var out []scan.Result
 	for _, r := range results {
-		if r.V.Verdict != "OK" || (strict && r.Fallback) {
+		if (r.V.Verdict != "OK" && r.V.Verdict != "SKIPPED") || (strict && r.Fallback) {
 			out = append(out, r)
 		}
 	}
@@ -154,13 +187,13 @@ func summarize(results []scan.Result) string {
 
 // Decide prints verdicts and usage, then returns whether it is safe to proceed
 // WITHOUT any interactive prompt. Used by the paru PreBuildCommand hook, whose
-// stdio may not be a usable TTY: any non-OK verdict blocks (fail-closed).
+// stdio may not be a usable TTY: adverse verdicts block (fail-closed); explicit
+// SKIPPED is the user-requested pass-through exception.
 func Decide(results []scan.Result, strict bool) bool {
 	summarize(results)
 	w := TerminalWidth()
 	if autoPass(results, strict) {
-		fmt.Println(Green("All scanned packages look clean.") +
-			Dim("  (heuristic scan — not a guarantee)"))
+		fmt.Println(cleanLine(results))
 		return true
 	}
 	fmt.Printf("%s%s\n", Red(Bold("!! aurscan blocked this build: ")),
@@ -169,7 +202,7 @@ func Decide(results []scan.Result, strict bool) bool {
 }
 
 // Gate prints every verdict, the accumulated session usage/cost, and — if any
-// package is non-OK — blocks. On a TTY it offers abort / report / override;
+// package has an adverse verdict — blocks. On a TTY it offers abort / report / override;
 // off a TTY (scripts, the editor hook in a non-interactive yay) it always
 // blocks. Returns true only if it is safe/approved to proceed.
 // GateVia is Gate's interactive core operating over an explicit reader/writer
@@ -179,6 +212,10 @@ func Decide(results []scan.Result, strict bool) bool {
 func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bool {
 	w := TerminalWidth()
 	for _, r := range results {
+		if r.V.Verdict == "SKIPPED" {
+			fmt.Fprintf(out, "[%s] %s - %s\n", VerdictBadge(r.V.Verdict), r.Pkg, r.V.Summary)
+			continue
+		}
 		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n",
 			VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
 		if r.V.Summary != "" {
@@ -221,8 +258,7 @@ func Gate(results []scan.Result, strict bool) bool {
 
 	w := TerminalWidth()
 	if autoPass(results, strict) {
-		fmt.Println(Green("All scanned packages look clean.") +
-			Dim("  (heuristic scan — not a guarantee)"))
+		fmt.Println(cleanLine(results))
 		return true
 	}
 

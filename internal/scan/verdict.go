@@ -38,7 +38,7 @@ type Verdict struct {
 }
 
 // Rank orders verdicts so callers can compute the worst across packages.
-var Rank = map[string]int{"OK": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}
+var Rank = map[string]int{"OK": 0, "SUSPICIOUS": 1, "MALICIOUS": 2, "SKIPPED": 0}
 
 // Result pairs a package name with its verdict and the usage it cost.
 // Failed is true when the scan could not be completed (backend/comms error or
@@ -374,6 +374,8 @@ func TrustScore(v Verdict) int {
 		return 34 + round((100.0-c)*32.0/100.0)
 	case "MALICIOUS":
 		return round((100.0 - c) * 33.0 / 100.0)
+	case "SKIPPED":
+		return 0 // no trust judgement; exit 0 so disabled runs pass cleanly
 	default:
 		return 0
 	}
