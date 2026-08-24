@@ -125,9 +125,6 @@ CRITICAL checks (a genuine hit means the package is malicious):
   its own source ("cp $BASH_SOURCE ..."), or uses the victim's AUR credentials
   (ssh://aur@aur.archlinux.org, git push) to republish itself into the packages
   they maintain.
-- hidden_install_scriptlet — install= names a dot-prefixed file
-  (install=".foo.install"). Pacman resolves it fine; the dot hides it from ls
-  and from any tool that skips dotfiles. No legitimate package needs this.
 - scriptlet_system_takeover — an install scriptlet makes root-level system
   changes: downloads a binary into /usr/local/bin, /usr/bin or /opt and chmod
   +x's it; writes a systemd unit (often "cat <<EOF >/etc/systemd/system/X" —

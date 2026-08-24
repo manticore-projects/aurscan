@@ -29,10 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `install=$pkgname.install` resolves through `pkgname=jdk${java_}-graalvm-bin`.
   A referenced file that was **not supplied** means the scan is *incomplete*,
   which is a different claim from "the package is clean" and now blocks an `OK`
-  verdict (`REF-001`, `REF-003`). A dot-prefixed `install=` is concealment —
-  pacman resolves it, `ls` and dotfile-skipping tools do not — and is **fatal on
-  its own** (`REF-002`). `REF-004` reports a local source file that is genuinely
-  absent.
+  verdict (`REF-001`, `REF-003`). `REF-002` reports a dot-prefixed
+  scriptlet as a **warning**, not a verdict: it hides from `ls` and from
+  dotfile-skipping tools, which is worth seeing, but a sweep of all 161,460 AUR
+  package branches found ~120 packages using a bare `.install` / `.INSTALL` as
+  an ordinary naming convention. A filename is not a behaviour — a worm that
+  renames itself evades any filename test for free — so fatality is reserved for
+  what a scriptlet *does*. `REF-004` reports a local source file that is
+  genuinely absent.
 - **Eleven rules for the worm family.** `PERSIST-007` (remote payload into a
   system binary directory), `PERSIST-008` (`chmod +x` on a system path),
   `PERSIST-009` (scriptlet writes a systemd unit), `PERSIST-010` (timer
@@ -71,8 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report the scanner's own truncation as a missing source, and the prompt lists
   it as *not reviewed* instead of asserting the supplied set is exhaustive.
 - **Verdict-cache version bumped to `v3`** for the new checklist ids
-  (`install_scriptlet_worm`, `hidden_install_scriptlet`,
-  `scriptlet_system_takeover`, `incomplete_scan`).
+  (`install_scriptlet_worm`, `scriptlet_system_takeover`, `incomplete_scan`).
 
 ### Fixed
 

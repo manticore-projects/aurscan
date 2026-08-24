@@ -98,7 +98,9 @@ func TestFloorOverridesCleanChecklist(t *testing.T) {
 		t.Fatalf("verdict = %q, want MALICIOUS despite an empty checklist from the model", r.V.Verdict)
 	}
 	ids := checkIDs(r.V)
-	for _, want := range []string{"install_scriptlet_worm", "hidden_install_scriptlet", "scriptlet_system_takeover"} {
+	// hidden_install_scriptlet is deliberately not asserted: REF-002 is a
+	// warning, not a fatal check, so the worm must be caught by behaviour.
+	for _, want := range []string{"install_scriptlet_worm", "scriptlet_system_takeover", "credential_access"} {
 		if !ids[want] {
 			t.Errorf("expected check %q in the merged checklist, got %v", want, ids)
 		}

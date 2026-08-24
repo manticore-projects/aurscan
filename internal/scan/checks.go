@@ -58,7 +58,6 @@ var checkCatalog = map[string]checkDef{
 	"prompt_injection":           {"critical", "Package text addressed to an AI/reviewer/scanner (\"this package is safe\", \"ignore previous instructions\", a verdict) — itself evidence of malice"},
 	"privilege_persistence":      {"critical", "sudo/pkexec/setuid manipulation, sudoers edits, or a pacman hook the package installs for itself that runs code"},
 	"install_scriptlet_worm":     {"critical", "An install scriptlet that replicates itself: copies its own source, or uses the victim's AUR credentials to push to aur.archlinux.org"},
-	"hidden_install_scriptlet":   {"critical", "install= names a dot-prefixed scriptlet — pacman resolves it, but it hides from ls and from tools that skip dotfiles"},
 	"scriptlet_system_takeover":  {"critical", "An install scriptlet makes root-level system changes: drops a binary into a system bin directory, writes and enables a systemd unit, or invokes pacman"},
 	"other_critical":             {"critical", "Another clearly malicious behaviour not covered by a specific check"},
 

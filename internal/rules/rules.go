@@ -640,7 +640,10 @@ var fatalCodes = map[string]bool{
 	"EXFIL-004": true, "WORM-001": true, "WORM-002": true, "WORM-003": true,
 	"CRED-004": true, "CRED-005": true, "PKGMGR-001": true,
 	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
-	"REF-002": true,
+	// REF-002 is deliberately absent. A hidden scriptlet is a filename, not a
+	// behaviour: ~120 AUR packages use a bare .install innocently, and a worm
+	// that renames itself evades any filename test for free. Guilt lives in
+	// what the scriptlet DOES, which the codes above cover.
 	// previously known campaigns and unambiguous RCE / exfil
 	"NPM-002": true, "CRYPTO-001": true, "CRYPTO-002": true,
 	"DLE-001": true, "DLE-002": true,
@@ -737,7 +740,7 @@ var checkIDFor = map[string]string{
 	"WORM-001":    "install_scriptlet_worm",
 	"WORM-002":    "install_scriptlet_worm",
 	"WORM-003":    "install_scriptlet_worm",
-	"REF-002":     "hidden_install_scriptlet",
+	"REF-002":     "incomplete_scan", // warning tier: concealment is a signal, not proof
 	"PERSIST-007": "scriptlet_system_takeover",
 	"PERSIST-008": "scriptlet_system_takeover",
 	"PERSIST-009": "scriptlet_system_takeover",

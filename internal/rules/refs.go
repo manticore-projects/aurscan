@@ -15,7 +15,8 @@ package rules
 // the scanner's own blind spots and make them loud:
 //
 //   REF-001  referenced file was NOT supplied  -> the scan is INCOMPLETE
-//   REF-002  install= names a hidden (dot-prefixed) file -> concealment
+//   REF-002  install= names a hidden (dot-prefixed) file -> concealment (warning:
+//            unusual and worth seeing, but ~120 AUR packages do it innocently)
 //   REF-003  the reference cannot be resolved statically -> unknown coverage
 //   REF-004  a local source=() entry was not supplied
 //
@@ -182,11 +183,29 @@ func checkReferences(files map[string]string, add func(code, name string, sev Se
 		seen[r.raw] = true
 		resolved := substVars(r.raw, vars)
 
-		// A dot-prefixed scriptlet is concealment, not convention: it hides
-		// from `ls` and from any directory walk that skips dotfiles, while
-		// pacman resolves it perfectly well. No legitimate package needs it.
-		if strings.HasPrefix(baseName(resolved), ".") || strings.HasPrefix(baseName(r.raw), ".") {
-			add("REF-002", "install= names a hidden (dot-prefixed) scriptlet", Critical,
+		// Concealment: a dot-prefixed scriptlet is hidden from `ls` and from
+		// any directory walk that skips dotfiles, while pacman resolves it
+		// perfectly well. That is worth telling the user about, and it is
+		// NOT proof of anything.
+		//
+		// This check was briefly fatal, then briefly narrowed to
+		// ".$pkgname.install" on the theory that the per-package form was the
+		// worm's signature. Both were wrong. A sweep of all 161,460 AUR package
+		// branches found ~120 packages using a bare .install / .INSTALL as an
+		// ordinary naming convention, so fatal-on-any-dot would have condemned
+		// every one of them. And the narrowed version rested on a base rate,
+		// not a mechanism: each AUR package is its own repository, so there is
+		// nothing for a filename to collide with — a worm calling itself
+		// ".install" replicates exactly as well and would evade the narrow
+		// check for free.
+		//
+		// Fatality belongs to BEHAVIOUR, not to a filename. The xsnow scriptlet
+		// is caught by what it does — PERSIST-007/008/009, WORM-001/002/003,
+		// CRED-004/005, PKGMGR-001, EXFIL-004 — and a PKGBUILD-only scan is
+		// already blocked from OK by REF-001. So this reports the concealment
+		// as a warning and leaves the judgement to the reviewer.
+		if strings.HasPrefix(baseName(r.raw), ".") || strings.HasPrefix(baseName(resolved), ".") {
+			add("REF-002", "install= names a hidden (dot-prefixed) scriptlet", High,
 				r.where, "install="+r.raw)
 		}
 		if strings.Contains(resolved, "$") {
