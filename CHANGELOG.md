@@ -7,7 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-24
+
 ### Added
+- **Install-scriptlet scanning — the `xsnow` / `xsnow-bin` worm class.** A
+  pacman install scriptlet is never executed by makepkg: it is embedded in the
+  built package as `.INSTALL` and run by libalpm **as root on the installing
+  machine**, on every install and every upgrade, with no `$pkgdir`. Nothing in
+  the PKGBUILD sources it — the only link is a filename string in `install=`. A
+  scanner that reviews the PKGBUILD alone can therefore report a package clean
+  with complete syntactic honesty while never having seen its payload. This is
+  exactly what the hostile `xsnow` package exploited: a dot-prefixed
+  `.xsnow.install` that fetched a binary over Tor into `/usr/local/bin`,
+  persisted it as a systemd unit, harvested `~/.ssh`, `/root/.ssh` and
+  `/home/*/.ssh`, and pushed **itself** back to every AUR repository the
+  victim's key could reach — so each new victim's PKGBUILD looked as clean as
+  the last one's.
+- **`REF-001`…`REF-004` — reference resolution.** Every file the package names
+  (`install=`, local `source=()` entries) is resolved against the file set the
+  scanner actually received, with iterative variable substitution so
+  `install=$pkgname.install` resolves through `pkgname=jdk${java_}-graalvm-bin`.
+  A referenced file that was **not supplied** means the scan is *incomplete*,
+  which is a different claim from "the package is clean" and now blocks an `OK`
+  verdict (`REF-001`, `REF-003`). A dot-prefixed `install=` is concealment —
+  pacman resolves it, `ls` and dotfile-skipping tools do not — and is **fatal on
+  its own** (`REF-002`). `REF-004` reports a local source file that is genuinely
+  absent.
+- **Eleven rules for the worm family.** `PERSIST-007` (remote payload into a
+  system binary directory), `PERSIST-008` (`chmod +x` on a system path),
+  `PERSIST-009` (scriptlet writes a systemd unit), `PERSIST-010` (timer
+  directives in a scriptlet), `PKGMGR-001` (`pacman -S` from a scriptlet),
+  `EXFIL-004` (`.onion` C2), `EXFIL-005` (SOCKS proxying), `CRED-004`
+  (root/all-user SSH enumeration), `CRED-005` (`~/.ssh` moved or symlinked
+  away), `WORM-001` (script copies itself), `WORM-002`/`WORM-003` (AUR push
+  credentials, `git push`), and `HOOK-001` (scriptlet detaches into the
+  background). The install-scoped rules only fire in files pacman actually
+  executes; `WORM-002`/`WORM-003` are further scoped away from maintainer
+  tooling (`release`, `update.sh`) that makepkg never runs.
+- **Redirection targets in the deobfuscated command view.** The payload of a
+  heredoc-written systemd unit lives in a `Redirect`, not in the command's
+  arguments, so `cat <<EOF >/etc/systemd/system/X.service` was previously
+  invisible to every command-scoped rule. Redirect operators and targets are now
+  rendered, along with a background (`&`) flag.
+- **Trusted file manifest in the auditor prompt.** The model is told exactly
+  which files it received, so it can distinguish "this package has no install
+  scriptlet" from "I was not given the install scriptlet" — a distinction the
+  PKGBUILD alone cannot express.
+
+### Changed
+- **Static findings are folded into the checklist rather than bolted on.**
+  Deterministic rule hits are converted to first-class `Check` entries and run
+  through the same `deriveVerdict` as the model's own answers, so one derivation
+  produces the verdict, per-finding severities, confidence and summary. The
+  model may always **escalate**; it has no mechanism to **clear** a finding in
+  the non-overridable set. This is a floor, not an override: an ordinary
+  critical hit in a PKGBUILD is still the model's call, and
+  `AURSCAN_STRICT_FLOOR=1` widens it for those who want it.
+- **Collectors no longer overstate their coverage.** `maxTotalBytes` raised from
+  240 KB to 512 KB (`openssl-1.1` ships 41 patches totalling 382 KB, whose tail
+  was silently dropped), and a file the collector skips — oversized, non-text,
+  or past the aggregate cap — is now **recorded** rather than discarded. It
+  appears in the file set marked as omitted, so reference resolution does not
+  report the scanner's own truncation as a missing source, and the prompt lists
+  it as *not reviewed* instead of asserting the supplied set is exhaustive.
+- **Verdict-cache version bumped to `v3`** for the new checklist ids
+  (`install_scriptlet_worm`, `hidden_install_scriptlet`,
+  `scriptlet_system_takeover`, `incomplete_scan`).
+
+### Fixed
+
+The rule catalog was calibrated against **158 real AUR packages** cloned from
+upstream. The unit suite was green at every stage below, including the stages
+where a rule was wrong on every real package it touched. Across the corpus,
+**53 MALICIOUS verdicts and ~120 findings became 1 and 20**, with no known false
+positives remaining. The recurring defect was rules reporting the *scanner's*
+confusion as a property of the package.
+
+- **`PERSIST-002` matched a bare `.timer` in any file** — a `REUSE.toml` listing
+  `"*.timer"` among its licence globs read as systemd persistence, 51 hits, all
+  wrong. It now requires an *action* (`systemctl enable|start … .timer`, or a
+  redirection into a systemd directory) and is scoped to shell content.
+  Installing a timer unit into `$pkgdir` is normal packaging and no longer
+  fires. `PERSIST-001`/`PERSIST-004` gained the same file scoping.
+- **`PRIV-001` flagged `optdepends = sudo:` in `.SRCINFO`** — a dependency
+  *declaration*, not an invocation. Command rules are now scoped to shell files:
+  a non-shell file fails to parse and previously fell back to raw-text matching.
+- **`DLE-001`/`DLE-002` matched `wget … | sha256sum`**, because `sh` matched the
+  head of `sha256sum`. Both codes are non-overridable, so a missing word
+  boundary would have made an ordinary checksum helper permanently unpassable.
+- **`CHK-005` rewritten from a regex to positional pairing.** `SKIP` is correct
+  and universal for a VCS checkout and for a detached signature verified by gpg.
+  The crux was **brace expansion**: `source=(url{,.sig})` is one array token but
+  two sources, so every checksum after it was off by one and the trailing `SKIP`
+  — belonging to the signature — was attributed to whatever came next. Now also
+  covers `b2sums`/`sha512sums`/etc. (previously `sha256sums` only) and
+  arch-suffixed arrays, and exempts local files, whose integrity is the
+  repository's. 13 hits became 2, both genuine.
+- **Source-array parsing unified.** Quote stripping (never truncation — the
+  `name::url` separator routinely sits outside the quotes), brace expansion,
+  `$( )`-aware tokenisation (a substitution may contain spaces) and
+  local-vs-remote classification (the scheme is often inside `$url`) are now done
+  once and shared, after four separate bugs lived in the same decision.
+- **Host classification split into three questions.** Canonical distribution
+  points and language registries (`ftp.gnu.org`, `files.pythonhosted.org`,
+  `registry.npmjs.org`, Maven Central, …) no longer trip a `url=` mismatch — a
+  project's homepage is never its distribution host. GitHub's raw and object
+  origins inherit `github.com`. Community asset hosts (`opendesktop.org`,
+  `pling.com`, `store.kde.org`, …) are classified as **generic** rather than
+  allowlisted: the upload path is chosen by whoever uploads, so the host
+  establishes nothing about who produced the file.
+
 - **Verdict reproducibility (discussion #56).** An identical re-scan no longer
   risks flipping the verdict. Two changes: sampling **temperature now defaults to
   0** (greedy) on the `api` and `openai` backends — the `api` path previously
@@ -415,7 +524,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/manticore-projects/aurscan/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/manticore-projects/aurscan/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/manticore-projects/aurscan/compare/v0.6.4...v0.7.0
 [0.2.2]: https://github.com/manticore-projects/aurscan/compare/v0.2.1...v0.2.2
