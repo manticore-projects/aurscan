@@ -9,11 +9,17 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/manticore-projects/aurscan/internal/rules"
 )
 
 const (
-	maxFileBytes  = 64 * 1024
-	maxTotalBytes = 240 * 1024
+	maxFileBytes = 64 * 1024
+	// maxTotalBytes was 240 KB, which truncated ordinary patch-heavy packages:
+	// openssl-1.1 ships 41 patches totalling 382 KB, so its tail was silently
+	// dropped. Model context is no longer the binding constraint it was when
+	// this was chosen.
+	maxTotalBytes = 512 * 1024
 )
 
 // Finding is one issue the auditor reported.
@@ -179,13 +185,46 @@ func buildPrompt(pkg string, files Files, sig Signals) string {
 		sb.WriteString(sig.StaticFindings)
 		sb.WriteString("\nConfirm, dismiss as false positives, or extend these with your own analysis.\n")
 	}
-	sb.WriteString("\n===== BEGIN UNTRUSTED PACKAGE FILES =====\n")
 	names := make([]string, 0, len(files))
 	for n := range files {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	// Trusted manifest, computed here rather than read from the package. It is
+	// the only way the auditor can tell "this package has no install scriptlet"
+	// apart from "I was not given the install scriptlet" — a distinction the
+	// PKGBUILD alone cannot express, because the only link between a PKGBUILD
+	// and its scriptlet is a filename string in install=.
+	var supplied, omitted []string
 	for _, n := range names {
+		if rules.IsOmitted(files[n]) {
+			omitted = append(omitted, n)
+		} else {
+			supplied = append(supplied, n)
+		}
+	}
+	fmt.Fprintf(&sb, "\n----- FILES SUPPLIED TO YOU (trusted, %d) -----\n", len(supplied))
+	for _, n := range supplied {
+		fmt.Fprintf(&sb, "  %s\n", n)
+	}
+	if len(omitted) > 0 {
+		// Never claim a truncated set is complete. A package whose payload sits
+		// in a file the collector skipped would otherwise be reviewed by a model
+		// that had been told it had seen everything.
+		fmt.Fprintf(&sb, "\n----- FILES PRESENT BUT NOT SUPPLIED (trusted, %d) -----\n", len(omitted))
+		for _, n := range omitted {
+			fmt.Fprintf(&sb, "  %s\n", n)
+		}
+		sb.WriteString("These files exist in the package but were too large, too numerous or\n" +
+			"not text, so they were NOT reviewed. Your review is INCOMPLETE: trigger\n" +
+			"incomplete_scan and do not certify behaviour that could live in them.\n")
+	} else {
+		sb.WriteString("Every file in the package is listed above. Any file referenced by the\n" +
+			"package but absent from this list was NOT reviewed.\n")
+	}
+
+	sb.WriteString("\n===== BEGIN UNTRUSTED PACKAGE FILES =====\n")
+	for _, n := range supplied {
 		fmt.Fprintf(&sb, "\n----- FILE: %s -----\n%s", n, files[n])
 	}
 	sb.WriteString("\n===== END UNTRUSTED PACKAGE FILES =====\n")
@@ -302,14 +341,19 @@ func CollectDir(dir string) (Files, error) {
 			}
 			return nil
 		}
+		rel, _ := filepath.Rel(dir, p)
 		if info.Size() > maxFileBytes || total > maxTotalBytes {
+			// Record the omission instead of dropping the name: absent and
+			// "present but not read" are different facts, and only one of them
+			// is about the package.
+			files[rel] = rules.OmittedContent
 			return nil
 		}
 		data, err := os.ReadFile(p)
 		if err != nil || !isTexty(data) {
+			files[rel] = rules.OmittedContent
 			return nil
 		}
-		rel, _ := filepath.Rel(dir, p)
 		files[rel] = string(data)
 		total += len(data)
 		return nil
@@ -317,8 +361,8 @@ func CollectDir(dir string) (Files, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := files["PKGBUILD"]; !ok {
-		return nil, fmt.Errorf("no PKGBUILD found in %s", dir)
+	if c, ok := files["PKGBUILD"]; !ok || rules.IsOmitted(c) {
+		return nil, fmt.Errorf("no readable PKGBUILD found in %s", dir)
 	}
 	return files, nil
 }

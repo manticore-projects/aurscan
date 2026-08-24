@@ -31,10 +31,18 @@ import (
 // from. text is "name arg arg" (or "NAME=val … name args"); echo/printf
 // arguments are dropped because they are printed data, not executed. obf is set
 // when the command was assembled with token-splicing obfuscation (issue #43).
+// Redirection targets are appended to text (" >/etc/systemd/system/x.service")
+// so that rules about *where a file is written* can match: the payload of a
+// heredoc-written systemd unit lives in a Redirect, not in the command args,
+// and was previously invisible to every command-scoped rule. bg is set when the
+// statement was backgrounded with "&" — in an .install scriptlet that means the
+// work detaches from pacman and keeps running after the transaction reports
+// success.
 type cmdLine struct {
 	line int
 	text string
 	obf  bool
+	bg   bool
 }
 
 // commandScoped lists the rule codes whose target is a command name, flag,
@@ -52,7 +60,16 @@ var commandScoped = map[string]bool{
 	"PERSIST-001": true, "PERSIST-002": true, "PERSIST-004": true, "PERSIST-006": true,
 	"CRYPTO-002": true, "ENV-001": true, "ENV-002": true,
 	"NPM-001": true, "OBF-001": true, "OBF-002": true, "HIDDEN-002": true,
+	"WORM-003": true, "CRED-005": true, "PKGMGR-001": true,
+	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
 }
+
+// Deliberately NOT command-scoped, despite naming commands or paths:
+//   CRED-004  "/home/*/.ssh /root/.ssh" appears in a `for` word list, which is
+//             not a CallExpr and so never reaches the command view.
+//   WORM-001  "$BASH_SOURCE" is a ParamExp; the command view resolves it away.
+//   WORM-002  the AUR remote lives inside a URL string argument.
+//   EXFIL-004/005  onion hosts and socks:// proxies are data literals.
 
 // outputBuiltins print their arguments rather than executing them, so their
 // argument text is data, not a command position. Dropping their args is what
@@ -78,6 +95,19 @@ func extractCommands(src string) ([]cmdLine, error) {
 // ("a | b | c") so pipe-spanning rules (curl|sh) still see the relationship, and
 // every other simple command on its own line. depth bounds eval recursion.
 func collectCommands(node syntax.Node, out *[]cmdLine, depth int) {
+	// Map each simple command back to the statement that carries its
+	// redirections and its "&" flag (both live on *syntax.Stmt, not on the
+	// CallExpr), so renderCall can surface them.
+	stmts := map[*syntax.CallExpr]*syntax.Stmt{}
+	syntax.Walk(node, func(n syntax.Node) bool {
+		if st, ok := n.(*syntax.Stmt); ok {
+			if ce, ok := st.Cmd.(*syntax.CallExpr); ok {
+				stmts[ce] = st
+			}
+		}
+		return true
+	})
+
 	// First, find maximal pipelines and the CallExprs they consume.
 	type pipe struct {
 		start, end uint
@@ -118,12 +148,13 @@ func collectCommands(node syntax.Node, out *[]cmdLine, depth int) {
 			continue
 		}
 		var parts []string
-		obf := false
+		obf, bg := false, false
 		for _, ce := range p.calls {
-			parts = append(parts, renderCall(ce))
+			parts = append(parts, renderCall(ce, stmts[ce]))
 			obf = obf || callObfuscated(ce)
+			bg = bg || isBackground(stmts[ce])
 		}
-		*out = append(*out, cmdLine{int(p.calls[0].Pos().Line()), strings.Join(parts, " | "), obf})
+		*out = append(*out, cmdLine{int(p.calls[0].Pos().Line()), strings.Join(parts, " | "), obf, bg})
 	}
 
 	// Then every non-piped simple command.
@@ -133,8 +164,8 @@ func collectCommands(node syntax.Node, out *[]cmdLine, depth int) {
 			return true
 		}
 		consumed[ce] = true
-		text := renderCall(ce)
-		*out = append(*out, cmdLine{int(ce.Pos().Line()), text, callObfuscated(ce)})
+		text := renderCall(ce, stmts[ce])
+		*out = append(*out, cmdLine{int(ce.Pos().Line()), text, callObfuscated(ce), isBackground(stmts[ce])})
 		// Depth-1 eval: re-parse a literal eval/source string as shell so
 		// `eval "s\"ud\"o …"` is deobfuscated too.
 		if depth < 1 && len(ce.Args) >= 2 {
@@ -150,9 +181,41 @@ func collectCommands(node syntax.Node, out *[]cmdLine, depth int) {
 	})
 }
 
+// isBackground reports whether the statement carrying this command ended in
+// "&". A backgrounded call in an install scriptlet outlives the pacman
+// transaction, which is how a hook hides long-running work behind an install
+// that appears to finish cleanly.
+func isBackground(st *syntax.Stmt) bool { return st != nil && st.Background }
+
+// renderRedirs appends the redirection operators and targets of st to b, e.g.
+// " <<EOF >/etc/systemd/system/x.service". Heredoc BODIES are deliberately not
+// rendered here — they are file *content*, already covered by the raw-text
+// rules — but the destination path is what turns "cat a heredoc" into "install
+// a systemd unit", so it must be visible to the command-scoped rules.
+func renderRedirs(b *strings.Builder, st *syntax.Stmt) {
+	if st == nil {
+		return
+	}
+	for _, r := range st.Redirs {
+		if r == nil {
+			continue
+		}
+		b.WriteByte(' ')
+		if r.N != nil {
+			b.WriteString(r.N.Value)
+		}
+		b.WriteString(r.Op.String())
+		if v, _ := resolveWord(r.Word); v != "" {
+			b.WriteString(v)
+		}
+	}
+}
+
 // renderCall reassembles a simple command as deobfuscated "NAME=val … name args"
-// text. Output-builtin arguments are dropped (they are printed data).
-func renderCall(ce *syntax.CallExpr) string {
+// text, followed by its redirection targets. Output-builtin arguments are
+// dropped (they are printed data) but their redirections are not: `echo x
+// >/etc/sudoers` is a write, not printed text.
+func renderCall(ce *syntax.CallExpr, st *syntax.Stmt) string {
 	var b strings.Builder
 	for _, as := range ce.Assigns {
 		if as.Name != nil {
@@ -166,6 +229,7 @@ func renderCall(ce *syntax.CallExpr) string {
 		}
 	}
 	if len(ce.Args) == 0 {
+		renderRedirs(&b, st)
 		return strings.TrimSpace(b.String())
 	}
 	name, _ := resolveWord(ce.Args[0])
@@ -177,6 +241,7 @@ func renderCall(ce *syntax.CallExpr) string {
 			b.WriteString(v)
 		}
 	}
+	renderRedirs(&b, st)
 	return b.String()
 }
 

@@ -17,15 +17,18 @@ import (
 	"time"
 
 	"github.com/manticore-projects/aurscan/internal/pipeline"
+	"github.com/manticore-projects/aurscan/internal/rules"
 	"github.com/manticore-projects/aurscan/internal/scan"
 )
 
 const (
-	rpcURL        = "https://aur.archlinux.org/rpc/v5/info"
-	snapshotURL   = "https://aur.archlinux.org/cgit/aur.git/snapshot/%s.tar.gz"
-	PkgURLFmt     = "https://aur.archlinux.org/packages/%s"
-	maxFileBytes  = 64 * 1024
-	maxTotalBytes = 240 * 1024
+	rpcURL       = "https://aur.archlinux.org/rpc/v5/info"
+	snapshotURL  = "https://aur.archlinux.org/cgit/aur.git/snapshot/%s.tar.gz"
+	PkgURLFmt    = "https://aur.archlinux.org/packages/%s"
+	maxFileBytes = 64 * 1024
+	// Kept in step with scan.maxTotalBytes: a patch-heavy package (openssl-1.1
+	// ships 41 patches, 382 KB) was truncated at the old 240 KB.
+	maxTotalBytes = 512 * 1024
 	httpTimeout   = 30 * time.Second
 )
 
@@ -131,16 +134,27 @@ func FetchSnapshot(pkgbase string) (scan.Files, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		if hdr.Typeflag != tar.TypeReg || hdr.Size > maxFileBytes || total > maxTotalBytes {
-			continue
-		}
-		data, err := io.ReadAll(io.LimitReader(tr, maxFileBytes+1))
-		if err != nil || !isTexty(data) {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		rel := hdr.Name
 		if i := strings.Index(rel, "/"); i >= 0 {
 			rel = rel[i+1:]
+		}
+		if rel == "" {
+			continue
+		}
+		// Record what we skip. An omitted file is still a file the package
+		// HAS, which is a different fact from one it lacks — and the auditor
+		// must be told its review is incomplete rather than exhaustive.
+		if hdr.Size > maxFileBytes || total > maxTotalBytes {
+			files[rel] = rules.OmittedContent
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxFileBytes+1))
+		if err != nil || !isTexty(data) {
+			files[rel] = rules.OmittedContent
+			continue
 		}
 		files[rel] = string(data)
 		total += len(data)

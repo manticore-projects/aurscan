@@ -1,0 +1,15 @@
+# SANITIZED reproduction of the install-scriptlet worm STRUCTURE.
+# Not functional malware: the payload host is unreachable and the AUR push is
+# inert. It only mimics the shape the scanner must catch — a clean-looking
+# PKGBUILD whose entire payload lives in a dot-prefixed install= scriptlet.
+pkgname=xsnow
+pkgver=3.7.6
+pkgrel=2
+pkgdesc="Let it snow on your desktop"
+arch=('x86_64')
+url="https://www.ratrabbit.nl/ratrabbit/xsnow/"
+source=("https://www.ratrabbit.nl/ratrabbit/system/files/xsnow/xsnow-$pkgver.tar.gz")
+b2sums=('SKIP')
+install=".$pkgname.install"
+build() { cd "$srcdir/xsnow-$pkgver"; ./configure --prefix=/usr; make; }
+package() { cd "$srcdir/xsnow-$pkgver"; make DESTDIR="$pkgdir" install; }

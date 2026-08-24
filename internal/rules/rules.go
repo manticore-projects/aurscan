@@ -50,8 +50,13 @@ func mk(code, name string, sev Severity, pattern string) Rule {
 // catalog is the built-in rule set. Patterns are case-insensitive where useful.
 var catalog = []Rule{
 	// --- Critical: remote code execution -----------------------------------
-	mk("DLE-001", "Curl pipe to shell", Critical, `(?i)curl\s[^|]*\|\s*(ba)?sh`),
-	mk("DLE-002", "Wget pipe to shell", Critical, `(?i)wget\s[^|]*\|\s*(ba)?sh`),
+	// The \b after (ba)?sh is load-bearing: without it, `sh` matches the start
+	// of `sha256sum`, so a checksum helper (`wget -qO - $url | sha256sum`)
+	// reads as curl-pipe-bash. Both codes are in fatalCodes — non-overridable
+	// — so that missing boundary made an ordinary release script permanently
+	// unclearable by the model.
+	mk("DLE-001", "Curl pipe to shell", Critical, `(?i)curl\s[^|]*\|\s*(ba)?sh\b`),
+	mk("DLE-002", "Wget pipe to shell", Critical, `(?i)wget\s[^|]*\|\s*(ba)?sh\b`),
 	mk("DLE-003", "Download then execute", Critical, `(?i)(curl|wget)\s.*-o\s*(\S+).*(chmod\s*\+x|\./)`),
 	mk("PASTE-001", "Paste-site download", Critical, `(?i)(pastebin\.com|ptpb\.pw|paste\.ee|0x0\.st|transfer\.sh)`),
 	// --- Critical: reverse shells -------------------------------------------
@@ -75,7 +80,19 @@ var catalog = []Rule{
 	// (CC-BY-NC-SA) or base64 signature data no longer matches.
 	mk("INSTALL-003", "Network in install script", Critical, `(?i)\b(curl|wget|ncat)\b|\bnc\s+-{0,2}\w`),
 	mk("PERSIST-001", "systemd service creation", Critical, `(?i)(systemctl\s+enable|/etc/systemd/system/.*\.service|/usr/lib/systemd/system/.*\.service)`),
-	mk("PERSIST-002", "systemd timer creation", Critical, `(?i)\.timer\b|OnBootSec|OnCalendar`),
+	// PERSIST-002 requires an ACTION, not a mention. The original pattern
+	// matched a bare ".timer" anywhere in any file, so a REUSE.toml listing
+	// "*.timer" among its licence globs — or a README, or a .desktop — read as
+	// systemd persistence. Shipping a timer unit into $pkgdir is also normal
+	// packaging, so the path form is anchored on a redirection (writing a unit
+	// onto the live system) rather than on the path alone.
+	mk("PERSIST-002", "systemd timer enabled or written", Critical,
+		`(?i)(systemctl\s+[^\n|]*\b(enable|start)\b[^\n|]*\.timer|>\s*/(etc|usr/lib|run)/systemd/system/[^\n]*\.timer)`),
+	// The directive form, kept separate because it can only be judged inside a
+	// scriptlet: a shipped foo.timer legitimately contains OnCalendar=, but a
+	// scriptlet containing it is assembling a timer on the live system.
+	mk("PERSIST-010", "systemd timer directives in an install scriptlet", High,
+		`(?im)^[ \t]*(OnBootSec|OnCalendar)[ \t]*=`),
 	mk("PERSIST-004", "boot script modification", Critical, `(?i)/etc/rc\.local|/etc/profile\.d/`),
 	mk("PERSIST-006", "systemd masquerading", Critical, `(?i)systemd-[a-z]+d\b`),
 	// --- Critical: mining / exfil -------------------------------------------
@@ -92,6 +109,35 @@ var catalog = []Rule{
 	// --- Critical: the 2025/2026 AUR campaign signatures --------------------
 	mk("NPM-001", "npm/bun install at build/install", Critical, `(?i)\b(npm|npx|bun|pnpm|yarn)\s+(install|add|x|run|exec)\b`),
 	mk("NPM-002", "Known malicious npm payload", Critical, `(?i)\b(atomic-lockfile|lockfile-js|js-digest)\b`),
+	// --- Critical: install-scriptlet worm (the xsnow-class attack) ----------
+	// A .install scriptlet runs as root on the INSTALLING machine, is never
+	// executed by makepkg, and is reachable from the PKGBUILD only through the
+	// `install=` filename string. The family below is what that access is used
+	// for: drop a Tor-fetched binary, persist it as a systemd unit, then steal
+	// the victim's AUR push key and re-publish the scriptlet into every AUR
+	// repo that key can reach — so each new victim's PKGBUILD looks as clean as
+	// the last one's did.
+	mk("EXFIL-004", "Tor onion C2 address", Critical, `(?i)\b[a-z2-7]{16,56}\.onion\b`),
+	mk("EXFIL-005", "SOCKS/Tor proxy for an outbound fetch", High, `(?i)socks[45]h?://`),
+	// WORM-001 tests the VERB, not the variable. `${BASH_SOURCE[0]}` is the
+	// ordinary way a helper script locates itself (`cd "$(dirname
+	// "${BASH_SOURCE[0]}")"`), and flagging that would make the floor noise.
+	// Self-LOCATION is routine; self-COPY is a worm. Only the latter fires.
+	mk("WORM-001", "Script copies itself (self-replication)", Critical,
+		`(?i)\b(cp|mv|dd|tee|cat|install)\b[^\n]*\$\{?BASH_SOURCE`),
+	mk("WORM-002", "AUR maintainer SSH remote used by a package script", Critical, `(?i)aur@aur\.archlinux\.org`),
+	mk("WORM-003", "git push from a package script", Critical, `(?i)\bgit\s+push\b`),
+	mk("CRED-004", "root / all-user SSH directory enumeration", Critical, `(?i)(/root/\.ssh\b|/home/\*/\.ssh\b)`),
+	mk("CRED-005", "SSH directory moved or symlinked away", Critical, `(?i)\b(mv|ln)\b[^\n]*(~|\$HOME|/root)/\.ssh\b`),
+	// install-only (see installOnly): these are unremarkable in a PKGBUILD
+	// under fakeroot but are root-level system changes in a scriptlet.
+	mk("PKGMGR-001", "pacman invoked from an install scriptlet", Critical, `(?i)\bpacman\s+-\S*S`),
+	mk("PERSIST-007", "Remote payload written into a system binary directory", Critical,
+		`(?i)\b(curl|wget)\b[^\n]*\s/(usr/local/s?bin|usr/s?bin|opt)/`),
+	mk("PERSIST-008", "chmod +x on a system binary path", Critical,
+		`(?i)\bchmod\b[^\n]*\+x[^\n]*\s/(usr/local/s?bin|usr/s?bin|opt)/`),
+	mk("PERSIST-009", "install scriptlet writes a systemd unit file", Critical,
+		`(?i)>\s*/(etc|usr/lib|run)/systemd/system/`),
 	// --- Critical/High: Unicode obfuscation (Trojan Source / homoglyph) ------
 	// Bidirectional controls reorder how a line *displays* vs how it parses
 	// (CVE-2021-42574); zero-width/BOM characters split tokens to evade regex
@@ -110,7 +156,8 @@ var catalog = []Rule{
 	mk("OBF-001", "base64 decode", High, `(?i)base64\s+(-d|--decode)`),
 	mk("OBF-002", "eval of dynamic string", High, `(?i)\beval\b`),
 	mk("OBF-003", "hex-encoded payload", High, `(\\x[0-9a-fA-F]{2}){4,}`),
-	mk("CHK-005", "non-VCS source uses SKIP", High, `(?i)sha256sums=\([^)]*SKIP`),
+	// CHK-005 is not a regex: it needs to pair each checksum with the source at
+	// the same index. See checkChecksums in checksums.go.
 	mk("URL-001", "raw IP in URL", High, `https?://\d{1,3}(\.\d{1,3}){3}`),
 	// Anchored to a scheme + path so "t.co" no longer matches inside
 	// "redhat.com" / "githubusercontent.com".
@@ -123,9 +170,6 @@ var catalog = []Rule{
 	// SRC-001 is handled specially in Scan via the reputable-host allowlist
 	// (it cannot be expressed as a single regex); see checkGitHosts.
 }
-
-// VCS sources legitimately use SKIP; avoid flagging CHK-005 for them.
-var vcsLine = regexp.MustCompile(`(?i)^\s*source=.*\b(git|svn|hg|bzr)\+`)
 
 // --- BLD-001 / BLD-002: build-cache confinement (issue #55) -----------------
 //
@@ -220,8 +264,13 @@ var gitSourceHost = regexp.MustCompile(`(?i)\b(?:git|svn|hg|bzr)\+https?://([^\s
 // must not be flagged by SRC-001. Extend via the user instructions file or a
 // future config knob rather than editing this list in place.
 var reputableGitHosts = map[string]bool{
-	// major public forges
+	// major public forges. The raw/object hosts are the SAME origin as
+	// github.com — a pinned raw.githubusercontent.com path is no less
+	// verifiable than the repository it serves — and omitting them made
+	// perfectly ordinary font and asset packages look unattributed.
 	"github.com": true, "www.github.com": true,
+	"raw.github.com": true, "raw.githubusercontent.com": true,
+	"objects.githubusercontent.com": true, "codeload.github.com": true,
 	"gitlab.com": true, "codeberg.org": true, "git.sr.ht": true,
 	"bitbucket.org":   true,
 	"sourceforge.net": true, "git.code.sf.net": true,
@@ -240,6 +289,12 @@ var reputableGitHosts = map[string]bool{
 	"git.savannah.gnu.org": true, "git.savannah.nongnu.org": true,
 	"savannah.gnu.org": true, "savannah.nongnu.org": true,
 	"gitbox.apache.org": true, "opendev.org": true,
+	// upstream project forges seen in the wild
+	"git.ffmpeg.org": true, "code.launchpad.net": true,
+	"git.enlightenment.org": true, "git.0pointer.net": true,
+	"mirrors.ctan.org": true, "ctan.org": true,
+	"git.videolan.org": true, "cgit.freedesktop.org": true,
+	"repo.or.cz": true, "git.zx2c4.com": true,
 }
 
 // isReputableGitHost reports whether host is on the allowlist, including the
@@ -265,6 +320,59 @@ var genericHostSuffixes = []string{
 	"blob.core.windows.net", "digitaloceanspaces.com", "aliyuncs.com",
 	"backblazeb2.com", "wasabisys.com", "fastly.net", "transfer.sh",
 	"temp.sh", "file.io", "gofile.io", "anonfiles.com", "mediafire.com",
+	// Community asset hosts. These are NOT allowlisted, deliberately: the
+	// upload path is chosen by whoever uploads, so a share link like
+	// my.opendesktop.org/s/<token>/download/Theme.tar.gz establishes nothing
+	// about who produced the file — the same property that puts an S3 bucket
+	// in this list rather than the other one.
+	"opendesktop.org", "pling.com", "store.kde.org", "kde-look.org",
+	"gnome-look.org", "xfce-look.org",
+}
+
+// distributionHosts are canonical upstream distribution points and language
+// package registries. SRC-003 asks "does the download host match the stated
+// upstream (url=)?" — a question that is meaningless for these: a GNU project's
+// homepage is never ftp.gnu.org, and a Python package's homepage is never
+// files.pythonhosted.org. Flagging the mismatch says nothing about provenance
+// and buries the cases where the mismatch IS the signal.
+//
+// This is NOT an integrity claim. A registry path is still attacker-choosable
+// (typosquatting), which is a different threat handled by other rules; what the
+// host establishes is that the artifact came from the ecosystem's canonical
+// distribution point rather than from someone's bucket.
+var distributionHosts = []string{
+	// language registries
+	"files.pythonhosted.org", "pypi.org", "pypi.python.org",
+	"registry.npmjs.org", "registry.yarnpkg.com",
+	"crates.io", "static.crates.io",
+	"rubygems.org", "hackage.haskell.org", "packagist.org",
+	"repo1.maven.org", "repo.maven.apache.org", "search.maven.org",
+	"proxy.golang.org", "cpan.org", "metacpan.org", "pause.perl.org",
+	// project / foundation distribution points
+	"ftp.gnu.org", "ftpmirror.gnu.org", "download.savannah.gnu.org",
+	"ftp.gnome.org", "download.gnome.org",
+	"download.kde.org", "kde.org",
+	"ftp.mozilla.org", "archive.mozilla.org",
+	"cdn.kernel.org", "kernel.org",
+	"ftp.x.org", "x.org", "xorg.freedesktop.org",
+	"downloads.sourceforge.net", "downloads.xiph.org",
+	"ftp.postgresql.org", "releases.llvm.org", "apache.org",
+	"downloads.apache.org", "archive.apache.org",
+	"ftp.debian.org", "deb.debian.org", "cdn-fastly.deb.debian.org",
+	"archive.ubuntu.com", "launchpad.net",
+	"sources.archlinux.org", "archlinux.org",
+	"pecl.php.net", "php.net", "www.php.net",
+}
+
+// isDistributionHost reports whether host is a canonical distribution point.
+func isDistributionHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, d := range distributionHosts {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 func isGenericHost(host string) bool {
@@ -315,15 +423,14 @@ func Scan(files map[string]string) []Hit {
 		hits = append(hits, Hit{Code: code, Name: name, Severity: sev, File: file, Snippet: snippet})
 	}
 	for name, text := range files {
-		isPKGBUILD := name == "PKGBUILD" || strings.HasSuffix(name, "/PKGBUILD")
-		isInstall := strings.HasSuffix(name, ".install")
-		hasVCS := false
-		for _, ln := range strings.Split(text, "\n") {
-			if vcsLine.MatchString(ln) {
-				hasVCS = true
-				break
-			}
+		// A file the collector skipped has no content to match. It is still
+		// present in the set so reference resolution can tell "in the
+		// repository but not read" from "not in the repository at all".
+		if IsOmitted(text) {
+			continue
 		}
+		isPKGBUILD := name == "PKGBUILD" || strings.HasSuffix(name, "/PKGBUILD")
+		isInstall := isInstallFile(name)
 		// Deobfuscated command view for shell files (issue #43). Command/flag
 		// rules are matched against this quote-removed, command-position-aware
 		// view so split-token tricks are caught and echo-string text does not
@@ -337,8 +444,19 @@ func Scan(files map[string]string) []Hit {
 			}
 		}
 		for _, r := range catalog {
-			// INSTALL-003 only applies to .install hook scripts.
-			if r.Code == "INSTALL-003" && !isInstall {
+			// Some rules describe root-level system changes that are normal
+			// under fakeroot in a PKGBUILD but never legitimate in a scriptlet
+			// that runs on the user's live system.
+			if installOnly[r.Code] && !isInstall {
+				continue
+			}
+			// Others are meaningful only in files that are actually executed,
+			// not in maintainer tooling that happens to live in the repo.
+			if executedOnly[r.Code] && !isExecutedFile(name) {
+				continue
+			}
+			// And some are meaningless outside shell content entirely.
+			if shellOnly[r.Code] && !isShellFile(name) {
 				continue
 			}
 			if commandScoped[r.Code] && parsed {
@@ -360,9 +478,6 @@ func Scan(files map[string]string) []Hit {
 			if idx < 0 {
 				continue
 			}
-			if r.Code == "CHK-005" && hasVCS {
-				continue // SKIP is expected for VCS sources
-			}
 			add(r.Code, r.Name, r.Severity, name, lineAround(text, idx))
 		}
 		// OBF-004: token-splicing obfuscation is itself a strong malicious signal
@@ -374,12 +489,27 @@ func Scan(files map[string]string) []Hit {
 				break
 			}
 		}
+		// HOOK-001: an install scriptlet that backgrounds its work detaches
+		// from the pacman transaction — the install reports success while the
+		// payload keeps running, and (with output redirected to /dev/null)
+		// prints nothing the user could notice. Legitimate scriptlets print a
+		// message and return.
+		if isInstall {
+			for _, c := range cmds {
+				if c.bg {
+					add("HOOK-001", "install scriptlet detaches work into the background", High, name, c.text)
+					break
+				}
+			}
+		}
 		// SRC-001: flag VCS sources on hosts that are NOT well-known forges or
 		// official distribution / upstream Git hosts. Only on PKGBUILD.
 		if isPKGBUILD {
 			// BLD-001/BLD-002: go/cargo caches not confined to $srcdir
 			// (issue #55).
 			checkCacheConfinement(name, text, cmds, parsed, add)
+			// CHK-005: integrity, paired positionally (checksums.go).
+			checkChecksums(name, text, add)
 			for _, m := range gitSourceHost.FindAllStringSubmatchIndex(text, -1) {
 				start, host := m[0], text[m[2]:m[3]]
 				if isCommentAt(text, start) || isReputableGitHost(host) {
@@ -410,6 +540,9 @@ func Scan(files map[string]string) []Hit {
 					// attacker-choosable. A signal to verify, not proof of malice.
 					add("SRC-002", "source on a generic object-storage / file host (verify provenance)",
 						Medium, name, lineAround(text, start))
+				case isDistributionHost(host):
+					// Canonical distribution point: a mismatch with url= is
+					// expected and carries no provenance signal.
 				case upstreamDomain != "" && !isReputableGitHost(host) &&
 					registrableDomain(host) != upstreamDomain &&
 					!isReputableGitHost(upstreamDomain):
@@ -421,6 +554,10 @@ func Scan(files map[string]string) []Hit {
 			}
 		}
 	}
+	// Cross-file pass: every rule above asks "is this file bad?". This one asks
+	// "did I even get all the files?" — the question that a PKGBUILD-only scan
+	// of an install-scriptlet worm can never answer from the PKGBUILD alone.
+	checkReferences(files, add)
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].File != hits[j].File {
 			return hits[i].File < hits[j].File
@@ -428,6 +565,258 @@ func Scan(files map[string]string) []Hit {
 		return hits[i].Code < hits[j].Code
 	})
 	return hits
+}
+
+// isInstallFile reports whether name is a pacman install scriptlet or hook —
+// content that libalpm executes as root on the installing machine. ".INSTALL"
+// is the name the scriptlet carries once embedded in a built package.
+func isInstallFile(name string) bool {
+	base := baseName(name)
+	return strings.HasSuffix(base, ".install") || base == ".INSTALL" ||
+		strings.HasSuffix(base, ".hook")
+}
+
+// isExecutedFile reports whether a file is one that makepkg or pacman actually
+// RUNS: the PKGBUILD itself, or an install scriptlet / hook. An AUR repository
+// routinely also carries maintainer tooling — release, update.sh, a bump
+// script — which is committed alongside the package but never executed by the
+// build or the install. Rules about what a package DOES must not fire on those.
+func isExecutedFile(name string) bool {
+	base := baseName(name)
+	return base == "PKGBUILD" || isInstallFile(name)
+}
+
+// executedOnly lists rules scoped to files makepkg/pacman execute. "git push"
+// is a worm signature in a scriptlet and unremarkable in a maintainer's own
+// release script sitting in the same repo — a distinction the file name makes
+// and the pattern cannot.
+var executedOnly = map[string]bool{
+	"WORM-002": true, "WORM-003": true,
+	// A download-and-run pipeline in the maintainer's own release/update script
+	// is how they refresh a checksum, not how the package behaves on your
+	// machine. makepkg never executes those files.
+	"DLE-001": true, "DLE-002": true,
+}
+
+// isShellFile reports whether a file's content is shell at all. Rules about
+// what a package DOES must not be matched against data files — a TOML manifest,
+// a .desktop entry, a patch hunk or a README mentions paths and unit names
+// without executing anything.
+func isShellFile(name string) bool {
+	base := baseName(name)
+	return base == "PKGBUILD" || isInstallFile(name) ||
+		strings.HasSuffix(base, ".sh") || strings.HasSuffix(base, ".bash")
+}
+
+// shellOnly lists rules that are only meaningful in shell content. Without this
+// scope they fire on any file that happens to contain the right substring: a
+// REUSE.toml listing "*.timer" among its licence globs is not systemd
+// persistence, and reporting it as critical taught users to ignore the scanner.
+var shellOnly = map[string]bool{
+	"PERSIST-001": true, "PERSIST-002": true, "PERSIST-004": true,
+	// .SRCINFO is generated metadata, not script: `optdepends = sudo: for
+	// installation via sudo` DECLARES a dependency named sudo, it does not run
+	// it. These rules are command-scoped, but a non-shell file fails to parse
+	// and falls back to raw-text matching, which is where that FP came from.
+	"PRIV-001": true, "PRIV-003": true,
+	"DLE-001": true, "DLE-002": true, "INSTALL-003": true,
+}
+
+// installOnly lists rules that only make sense inside a scriptlet: in a
+// PKGBUILD these paths are written under $pkgdir by fakeroot, but a scriptlet
+// has no $pkgdir — every path it touches is the live system.
+var installOnly = map[string]bool{
+	"INSTALL-003": true, "PKGMGR-001": true,
+	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
+	"PERSIST-010": true,
+}
+
+// fatalCodes are findings a model is NOT permitted to talk its way out of.
+// Each one is deterministic, has no plausible benign form in an AUR package,
+// and was chosen so that a false positive would be a bug worth fixing rather
+// than a judgement call worth deferring to an LLM.
+var fatalCodes = map[string]bool{
+	// install-scriptlet worm family
+	"EXFIL-004": true, "WORM-001": true, "WORM-002": true, "WORM-003": true,
+	"CRED-004": true, "CRED-005": true, "PKGMGR-001": true,
+	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
+	"REF-002": true,
+	// previously known campaigns and unambiguous RCE / exfil
+	"NPM-002": true, "CRYPTO-001": true, "CRYPTO-002": true,
+	"DLE-001": true, "DLE-002": true,
+	"SHELL-001": true, "SHELL-002": true, "EXFIL-003": true,
+	"OBF-004": true, "UNI-001": true, "UNI-002": true,
+	// attempts to steer the reviewer itself
+	"AI-001": true, "AI-002": true, "AI-003": true, "AI-004": true, "AI-005": true,
+}
+
+// fatalInInstallOnly are codes that are damning inside a scriptlet but have a
+// plausible benign form elsewhere: `${BASH_SOURCE[0]}` is a normal way for a
+// helper .sh to locate itself, whereas a scriptlet copying itself somewhere is
+// a worm. Outside an install file these raise SUSPICIOUS instead of MALICIOUS,
+// leaving the judgement with the model — which is what the model is for.
+var fatalInInstallOnly = map[string]bool{"WORM-001": true}
+
+// IsFatal reports whether a rule code is non-overridable.
+func IsFatal(code string) bool { return fatalCodes[code] }
+
+// Floor returns the LOWEST verdict a scan may report given these hits: "" (no
+// constraint), "SUSPICIOUS", or "MALICIOUS". It exists because a model verdict
+// is a judgement and a rule hit is a fact, and a fluent judgement should not be
+// able to erase a fact. The model may always escalate; it may never clear a
+// floor.
+//
+// The bands are deliberately narrow so the floor does not become noise:
+//   - a fatal code (see fatalCodes)                       -> MALICIOUS
+//   - REF-001/REF-003: the scan is incomplete             -> SUSPICIOUS
+//   - any critical hit inside an .install/.hook scriptlet -> SUSPICIOUS
+//   - strict: any critical hit anywhere                   -> SUSPICIOUS
+//
+// Without strict, an ordinary critical hit in a PKGBUILD (e.g. PRIV-001 sudo,
+// which does occur in legitimate packages) still leaves the model free to
+// dismiss it as a false positive — which is what the model is for.
+func Floor(hits []Hit, strict bool) string {
+	rank := map[string]int{"": 0, "SUSPICIOUS": 1, "MALICIOUS": 2}
+	floor := ""
+	raise := func(v string) {
+		if rank[v] > rank[floor] {
+			floor = v
+		}
+	}
+	for _, h := range hits {
+		switch {
+		case fatalCodes[h.Code] && fatalInInstallOnly[h.Code] && !isInstallFile(h.File):
+			raise("SUSPICIOUS")
+		case fatalCodes[h.Code]:
+			raise("MALICIOUS")
+		case h.Code == "REF-001" || h.Code == "REF-003":
+			raise("SUSPICIOUS")
+		case h.Severity == Critical && isInstallFile(h.File):
+			raise("SUSPICIOUS")
+		case strict && h.Severity == Critical:
+			raise("SUSPICIOUS")
+		}
+	}
+	return floor
+}
+
+// FloorReasons returns the hits that produced the given floor, so callers can
+// show the user WHY a model verdict was overridden rather than just that it was.
+func FloorReasons(hits []Hit, strict bool) []Hit {
+	var out []Hit
+	for _, h := range hits {
+		if Floor([]Hit{h}, strict) != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// FloorCheck is one static finding expressed in the vocabulary of the auditor's
+// checklist rather than the rule catalog's. It is deliberately a plain struct
+// with no dependency on the scan package: the caller (pipeline) converts it to
+// a scan.Check, so rules stays free of that import.
+//
+// This indirection exists so a static hit and a model-reported behaviour end up
+// in the SAME place. Under the Tier-2 checklist the verdict, severities,
+// confidence and summary are all derived in Go from which checks fired, so
+// folding rule hits in as checks means one deterministic derivation instead of
+// a model verdict with a floor bolted on top of it afterwards.
+type FloorCheck struct {
+	ID       string // a checkCatalog id
+	File     string
+	Evidence string
+	Note     string
+}
+
+// checkIDFor maps a rule code onto the checklist id that describes the same
+// behaviour. Codes absent from this map fall back to severity-based ids, so a
+// new rule is never silently dropped from the floor.
+var checkIDFor = map[string]string{
+	// the install-scriptlet worm family
+	"WORM-001":    "install_scriptlet_worm",
+	"WORM-002":    "install_scriptlet_worm",
+	"WORM-003":    "install_scriptlet_worm",
+	"REF-002":     "hidden_install_scriptlet",
+	"PERSIST-007": "scriptlet_system_takeover",
+	"PERSIST-008": "scriptlet_system_takeover",
+	"PERSIST-009": "scriptlet_system_takeover",
+	"PKGMGR-001":  "scriptlet_system_takeover",
+	"CRED-004":    "credential_access",
+	"CRED-005":    "credential_access",
+	"EXFIL-004":   "exfiltration",
+	// pre-existing codes that already have a checklist equivalent
+	"CRED-001":  "credential_access",
+	"CRED-002":  "credential_access",
+	"CRED-003":  "credential_access",
+	"EXFIL-003": "exfiltration",
+	"DLE-001":   "pipe_to_shell",
+	"DLE-002":   "pipe_to_shell",
+	"NPM-002":   "unrelated_pkg_manager_exec",
+	"SHELL-001": "remote_code_exec",
+	"SHELL-002": "remote_code_exec",
+	"OBF-004":   "obfuscated_payload",
+	"UNI-001":   "obfuscated_payload",
+	"UNI-002":   "obfuscated_payload",
+	"AI-001":    "prompt_injection",
+	"AI-002":    "prompt_injection",
+	"AI-003":    "prompt_injection",
+	"AI-004":    "prompt_injection",
+	"AI-005":    "prompt_injection",
+	// the scanner's own blind spot, not the package's behaviour
+	"REF-001": "incomplete_scan",
+	"REF-003": "incomplete_scan",
+	"REF-004": "incomplete_scan",
+}
+
+// FloorChecks renders the floor-triggering hits as checklist entries. The set
+// of hits it covers is exactly the set Floor() acts on, so the derived verdict
+// cannot disagree with Floor(): a fatal code yields a critical check, and an
+// incompleteness or install-scoped critical yields a warning check.
+func FloorChecks(hits []Hit, strict bool) []FloorCheck {
+	var out []FloorCheck
+	for _, h := range FloorReasons(hits, strict) {
+		id, ok := checkIDFor[h.Code]
+		if !ok {
+			// No specific mapping: fall back to the sanctioned catch-alls so
+			// the finding still lands at the right severity.
+			if Floor([]Hit{h}, strict) == "MALICIOUS" {
+				id = "other_critical"
+			} else {
+				id = "other_warning"
+			}
+		}
+		// A fatal code must never be downgraded by its mapping. WORM-001 in a
+		// helper .sh raises SUSPICIOUS, not MALICIOUS (see fatalInInstallOnly),
+		// so it maps to a warning id rather than its critical one.
+		if Floor([]Hit{h}, strict) == "SUSPICIOUS" && checkCatalogSeverityIsCritical(id) {
+			id = "other_warning"
+		}
+		out = append(out, FloorCheck{
+			ID:       id,
+			File:     h.File,
+			Evidence: h.Snippet,
+			Note:     h.Code + " " + h.Name + " (static rule)",
+		})
+	}
+	return out
+}
+
+// checkCatalogSeverityIsCritical mirrors the critical tier of the auditor's
+// checklist. It is duplicated here rather than imported because rules must not
+// depend on scan; the scan package's TestFloorCheckIDsAreKnown pins the two
+// together so they cannot drift apart silently.
+func checkCatalogSeverityIsCritical(id string) bool {
+	switch id {
+	case "pipe_to_shell", "unrelated_pkg_manager_exec", "credential_access",
+		"remote_code_exec", "kernel_bpf_preload", "exfiltration",
+		"disguised_source", "obfuscated_payload", "prompt_injection",
+		"privilege_persistence", "install_scriptlet_worm",
+		"hidden_install_scriptlet", "scriptlet_system_takeover",
+		"other_critical":
+		return true
+	}
+	return false
 }
 
 // firstLiveMatch returns the start offset of the first match of re that does not

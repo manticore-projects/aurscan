@@ -26,12 +26,82 @@ func Run(pkg string, files scan.Files, rep string) scan.Result {
 
 	sig := scan.Signals{StaticFindings: formatHits(hits), Reputation: rep}
 
-	// If an LLM backend is configured, use it (informed by the static hits).
+	// If an LLM backend is configured, use it (informed by the static hits) —
+	// but never let its judgement fall below the deterministic floor.
 	if _, err := scan.PickBackend(); err == nil {
-		return scan.Scan(pkg, files, sig)
+		return applyFloor(scan.Scan(pkg, files, sig), hits)
 	}
 	// No backend: fall back to a deterministic rules-only verdict.
 	return rulesOnlyVerdict(pkg, hits, "no LLM backend configured — static rules only")
+}
+
+// StrictFloor reports whether the user asked for the widest floor
+// (AURSCAN_STRICT_FLOOR=1): any critical static hit anywhere then prevents an
+// OK verdict, not only those in an install scriptlet. Off by default because a
+// few critical codes (PRIV-001 in particular) do occur in legitimate PKGBUILDs,
+// and dismissing those is exactly what the model is for.
+func StrictFloor() bool { return os.Getenv("AURSCAN_STRICT_FLOOR") == "1" }
+
+// applyFloor folds the deterministic static-rule findings into the model's
+// result as first-class checks.
+//
+// A rule hit is a fact; a model verdict is a judgement. A fluent judgement must
+// not be able to erase a fact — that is how a scanner reports 97% confidence on
+// a package whose payload it never read. But the fix must not undo Tier 2
+// either: patching the Verdict afterwards would reintroduce a second summary
+// generator and findings that bypassed the catalog. So the hits are converted
+// to checks (rules.FloorChecks) and the whole thing is re-derived by the same
+// deriveVerdict that handles the model's answers.
+//
+// The result is that scan.MergeStaticChecks, not this function, decides the
+// verdict — and it can only ever raise it, because deriveVerdict is monotone in
+// the set of triggered checks.
+func applyFloor(res scan.Result, hits []rules.Hit) scan.Result {
+	// A failed scan is already fail-closed; leave its diagnostics intact.
+	if res.Failed {
+		return res
+	}
+	static := staticChecks(hits, StrictFloor())
+	if len(static) == 0 {
+		return res
+	}
+	res.V = scan.MergeStaticChecks(res.V, static)
+	return res
+}
+
+// staticChecks converts floor-triggering rule hits into auditor checks. An id
+// the catalog does not know would be recorded as "info" by deriveVerdict — no
+// verdict impact — which would silently defeat the floor, so an unknown id is
+// mapped to the sanctioned catch-all instead.
+func staticChecks(hits []rules.Hit, strict bool) []scan.Check {
+	fcs := rules.FloorChecks(hits, strict)
+	if len(fcs) == 0 {
+		return nil
+	}
+	out := make([]scan.Check, 0, len(fcs))
+	for _, fc := range fcs {
+		id := fc.ID
+		if !scan.KnownCheckID(id) {
+			dbgFallback(id)
+			id = "other_critical"
+		}
+		out = append(out, scan.Check{
+			ID:        id,
+			Triggered: true,
+			File:      fc.File,
+			Evidence:  fc.Evidence,
+			Note:      fc.Note,
+		})
+	}
+	return out
+}
+
+// dbgFallback reports a rules->checklist mapping that no longer resolves. This
+// is a programming error rather than a scan finding: TestFloorCheckIDsAreKnown
+// is meant to catch it before it ships.
+func dbgFallback(id string) {
+	fmt.Fprintf(os.Stderr, "WARNING: static-rule check id %q is not in the auditor checklist; "+
+		"recording as other_critical\n", id)
 }
 
 // AllowRulesOnly reports whether the user has opted into running without an LLM
