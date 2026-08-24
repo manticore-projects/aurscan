@@ -21,6 +21,7 @@ package rules
 // literal skeleton is reassembled and the rest is left to the LLM backstop.
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -248,18 +249,52 @@ func renderCall(ce *syntax.CallExpr, st *syntax.Stmt) string {
 // callObfuscated reports whether a command was disguised with token-splicing
 // obfuscation — the command word, or (for non-output builtins) any argument.
 // Output-builtin arguments are printed data, so quoting inside them is ignored.
+// callObfuscated reports token splicing in the COMMAND-NAME position only.
+//
+// It used to check every argument as well, and that made it fire on 112 of
+// 19,934 real AUR packages — every one of them innocent. The reason is that
+// "this word is assembled from several pieces" is true of `su$'\x64'o` and
+// equally true of `sed -i 's|$app['log.path']|…|'`, `awk '{print $2}'` and
+// `mkdir -p /usr/{bin,lib}`. Quoting inside a sed script or an awk program is
+// how those tools are used.
+//
+// Splicing is only evidence of anything where it hides WHAT IS BEING RUN. That
+// is the rule's own stated rationale — a PKGBUILD has no honest reason to
+// disguise a command NAME — and restricting it to Args[0] restores exactly
+// that claim. An obfuscated argument to an otherwise plain command is still
+// visible to every other rule, because the deobfuscated command view resolves
+// it before matching.
+// tokenLike matches a word that could plausibly BE a command name or a path —
+// the only place token splicing hides anything. A sed script, an awk program or
+// a regex is full of shell metacharacters and is not token-like.
+var tokenLike = regexp.MustCompile(`^[A-Za-z0-9_./+-]+$`)
+
 func callObfuscated(ce *syntax.CallExpr) bool {
 	if len(ce.Args) == 0 {
 		return false
 	}
+	// The command name: splicing here disguises WHAT RUNS, which is the whole
+	// rationale for the rule. Always checked.
 	if wordObfuscated(ce.Args[0]) {
 		return true
 	}
 	if outputBuiltins[baseName(firstWord(ce.Args[0]))] {
 		return false
 	}
+	// Arguments: splicing a PATH is worth reporting (`cat /etc/su""doers`), but
+	// "this word is assembled from several pieces" is also true of every sed
+	// script, awk program and quote-escape idiom in the AUR — `'"'"'` is the
+	// standard way to put a single quote inside a single-quoted string, and it
+	// is indistinguishable from splicing at the parse-tree level. It matched
+	// 112 of 19,934 real packages, none of them obfuscated.
+	//
+	// So an argument only counts when the word it resolves to could itself be a
+	// command or a path. That keeps /etc/su""doers and drops the scripts.
 	for _, a := range ce.Args[1:] {
-		if wordObfuscated(a) {
+		if !wordObfuscated(a) {
+			continue
+		}
+		if v, _ := resolveWord(a); tokenLike.MatchString(v) {
 			return true
 		}
 	}
@@ -272,6 +307,43 @@ func callObfuscated(ce *syntax.CallExpr) bool {
 // (su$'\x64'o), or an ${IFS…} separator injection. It deliberately does NOT
 // flag ordinary variable interpolation such as $pkgname-$pkgver or a quoted
 // value like --prefix="/usr", which are normal in PKGBUILDs.
+// splicesIdentifier reports whether the quoted fragment at index i breaks a
+// word IN THE MIDDLE OF AN IDENTIFIER, which is what disguising a command name
+// looks like — s"ud"o, cu""rl, /etc/su""doers.
+//
+// Quoting that lands on a separator is structural, not evasive:
+//
+//	git config submodule."c/c-ringbuf".url "$srcdir/c-ringbuf"
+//
+// quotes one dot-delimited segment of a config key, which is how the key is
+// meant to be written. That shape produced 20 of the sweep's false positives.
+// The test is what sits either side of the fragment: alphanumeric on both means
+// a token was split; a '.', '/', '=' or ':' means the fragment IS a component.
+// partText resolves one word part to its literal text, reusing resolveWord's
+// rules by wrapping the part in a single-part word.
+func partText(p syntax.WordPart) string {
+	v, _ := resolveWord(&syntax.Word{Parts: []syntax.WordPart{p}})
+	return v
+}
+
+func splicesIdentifier(parts []syntax.WordPart, i int) bool {
+	alnum := func(r byte) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_'
+	}
+	before, after := byte(0), byte(0)
+	if i > 0 {
+		if v := partText(parts[i-1]); v != "" {
+			before = v[len(v)-1]
+		}
+	}
+	if i+1 < len(parts) {
+		if v := partText(parts[i+1]); v != "" {
+			after = v[0]
+		}
+	}
+	return alnum(before) && alnum(after)
+}
+
 func wordObfuscated(w *syntax.Word) bool {
 	if w == nil || len(w.Parts) < 2 {
 		return false
@@ -283,12 +355,14 @@ func wordObfuscated(w *syntax.Word) bool {
 			if x.Dollar { // $'…' ANSI-C encoding used to build a larger word
 				return true
 			}
-			if interior(i, n) && !strings.ContainsAny(x.Value, " \t\n") {
+			if interior(i, n) && !strings.ContainsAny(x.Value, " \t\n") &&
+				splicesIdentifier(w.Parts, i) {
 				return true // '…' fragment splicing a token from the inside
 			}
 		case *syntax.DblQuoted:
 			if interior(i, n) && !dquotedHasExpansion(x) &&
-				!strings.ContainsAny(dquotedText(x), " \t\n") {
+				!strings.ContainsAny(dquotedText(x), " \t\n") &&
+				splicesIdentifier(w.Parts, i) {
 				return true // "…" fragment (incl. empty "") splicing a token
 			}
 		case *syntax.ParamExp:

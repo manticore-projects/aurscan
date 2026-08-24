@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-24
+
+### Fixed
+
+Calibration against **all 19,934 AUR packages that declare `install=`**, cloned
+from the GitHub mirror of the AUR. The 0.8.2 rules reported 195 of them as
+MALICIOUS; after this release 30 remain, of which the ~8 openly-named
+cryptominers are correct findings. The same defect recurs throughout: a rule
+matching something *adjacent to* the thing it claims to detect.
+
+- **`OBF-004`** treated every multi-part word as token splicing, so every `sed`
+  script, `awk` program and quote-escape idiom in the AUR looked obfuscated —
+  `'"'"'` is the only way to put a single quote inside a single-quoted string,
+  and at the parse-tree level it is indistinguishable from splicing. Splicing
+  now requires alphanumeric characters on *both* sides of the quoted fragment,
+  which is what disguising a command name looks like (`s"ud"o`, `cu""rl`,
+  `/etc/su""doers`) and what quoting a dot-delimited config-key segment does not
+  (`git config submodule."c/c-ringbuf".url`). 112 hits, all false.
+- **`UNI-002`** flagged `U+200C`/`U+200D`, which are *required orthography* in
+  Indic, Arabic, Persian and Thai — a Malayalam application name in a `.desktop`
+  file does not render without one. It also flagged a byte-order mark at offset
+  zero, which hides nothing because nothing precedes it. Now scoped to shell
+  content and to zero-width characters in the middle of the text.
+- **`PKGMGR-001`** matched `pacman -Qs` (a query), `pacman --deptest`
+  (case-insensitively hitting the `s` in "deptest"), `pacman -Sl`/`-Si` (sync
+  queries) and `note "Use: pacman -S htop"` (where the command is `note`). Now
+  anchored to the command position, case-sensitive, sync/upgrade operations only.
+- **`PERSIST-009`** flagged `/etc/systemd/system/<unit>.service.d/override.conf`
+  — the idiomatic drop-in for a unit the package already ships. The worm writes
+  a whole new unit file, so the target must end in `.service`/`.socket`/`.timer`.
+- **`PERSIST-007`** covered all of `/opt`; a package downloading a model file
+  into `/opt/<pkg>/models/` with a checksum is not writing a binary. Now
+  restricted to `bin`/`sbin` locations.
+- **`SHELL-002`** matched any `nc … -e`. A listener serving an HTML log page
+  (`nc -vlc -p 7998 -e 'printf …; cat log.html'`) is not a reverse shell; `-e`
+  must execute a shell.
+- **`CRED-004`** fired on `deny /home/*/.ssh/** r,` in an AppArmor profile —
+  which *denies* the access — and on dropbear's initrd hook naming
+  `/root/.ssh/authorized_keys`, which is the feature. Requires a reading or
+  traversing verb.
+- **`CRED-005`** fired on `ln -sf "$SSH_AUTH_SOCK" ~/.ssh/ssh_auth_sock`, the
+  standard ssh-agent idiom. The worm replaces the *directory*.
+- **`WALLET-001`** matched the bare word `keystore`, a Java/TLS term long before
+  a crypto one, and hit a SIEM password tool.
+- **`AI-004`** matched bare `<system>` — a usage placeholder in a help message
+  and a Flask route parameter. Requires the chat-template pipe form.
+- **`ENV-001`/`ENV-002`, `PRIV-001`/`PRIV-003`, `CRED-001`–`CRED-003`** scoped
+  to shell content; **`EXFIL-003`/`EXFIL-004`, `DLE-001`/`DLE-002`,
+  `WORM-002`/`WORM-003`** scoped to files makepkg or pacman actually executes. A
+  Telegram notification in a maintainer's `check-version.sh` and an `.onion`
+  address inside a `.patch` are not the package's behaviour.
+
+### Changed
+- **`CRYPTO-001`/`CRYPTO-002` are no longer non-overridable.** They are correct
+  about `xmrig-bin` and friends — those packages *are* miners — but a verdict
+  the model cannot clear stops someone installing one deliberately. The
+  non-overridable set means "no legitimate form exists"; a knowingly-installed
+  miner has one. Mining hidden in an unrelated package is still caught, because
+  a model would not clear that.
+
 ## [0.8.2] - 2026-08-24
 
 ### Fixed
@@ -586,7 +646,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/manticore-projects/aurscan/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/manticore-projects/aurscan/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/manticore-projects/aurscan/compare/v0.7.1...v0.8.0
