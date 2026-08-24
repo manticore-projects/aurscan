@@ -127,21 +127,32 @@ func formatHits(hits []rules.Hit) string {
 }
 
 func rulesOnlyVerdict(pkg string, hits []rules.Hit, note string) scan.Result {
+	// Verdict policy without a model.
+	//
+	// This used to map ANY critical hit to MALICIOUS via rules.Worst(). That is
+	// too strong for a mode with no model to weigh anything: a scan of 120 real
+	// AUR packages that ship install scriptlets returned 32 MALICIOUS, none of
+	// them malicious — an intrusion-detection config naming /etc/shadow, a
+	// package shipping its own .service file, a scriptlet enabling the unit it
+	// just installed. A gate that condemns a quarter of what it sees is a gate
+	// people switch off.
+	//
+	// The non-overridable set (rules.Floor) is the honest bar: those codes have
+	// no plausible benign form, and they are the same ones the model is not
+	// allowed to clear when a model IS present. Everything else a critical rule
+	// finds is real but needs judgement, so it lands on SUSPICIOUS and says so.
 	v := scan.Verdict{Confidence: 60}
-	switch rules.Worst(hits) {
-	case rules.Critical:
+	switch {
+	case rules.Floor(hits, StrictFloor()) == "MALICIOUS":
 		v.Verdict = "MALICIOUS"
-		v.Summary = "Static rules matched critical patterns (" + note + ")."
-	case rules.High:
+		v.Summary = "Static rules matched non-overridable patterns (" + note + ")."
+	case len(hits) > 0:
 		v.Verdict = "SUSPICIOUS"
-		v.Summary = "Static rules matched high-severity patterns (" + note + ")."
-	case "":
+		v.Summary = "Static rules matched (" + note + "). Without a model these need review, not a verdict."
+	default:
 		v.Verdict = "OK"
 		v.Confidence = 40
 		v.Summary = "No static-rule matches (" + note + "). Note: without an LLM this is a weak signal."
-	default:
-		v.Verdict = "SUSPICIOUS"
-		v.Summary = "Static rules matched (" + note + ")."
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Code < hits[j].Code })
 	for _, h := range hits {

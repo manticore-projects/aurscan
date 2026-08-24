@@ -35,8 +35,10 @@ func loadWorm(t *testing.T) map[string]string {
 func TestInstallScriptletWormCaught(t *testing.T) {
 	got := wormCodes(loadWorm(t))
 	want := []string{
-		"PERSIST-007", // Tor-fetched binary dropped in /usr/local/bin
-		"PERSIST-008", // chmod +x on it
+		"PERSIST-007", // Tor-fetched binary dropped in /usr/local/bin (the chmod
+		//               that follows is NOT a rule of its own: see the
+		//               PERSIST-008 removal — a chmod with no fetch behind it
+		//               is a permission fix, not an attack)
 		"PERSIST-009", // systemd unit written through a heredoc redirect
 		"PKGMGR-001",  // pacman -S tor from a scriptlet
 		"EXFIL-004",   // onion C2

@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-24
+
+### Fixed
+
+The v0.8.0 rules were calibrated against 158 packages, **almost none of which
+ship an install scriptlet** — so the scriptlet rules, and the pre-existing rules
+reused inside scriptlets, had never been exercised against a legitimate one.
+Measured against 120 real AUR packages that do ship hidden scriptlets, 32 came
+back MALICIOUS and none were malicious. All 120 now pass.
+
+- **`PRIV-001`/`PRIV-003` no longer fire inside a scriptlet.** The rule asks
+  whether the *build* tries to gain privileges. A scriptlet already runs as
+  root, so there is nothing to gain: `sudo chmod 644 /etc/netctl/*` in a
+  `post_install` is a redundant `sudo`, not an escalation.
+- **`PERSIST-001` demoted to warning and narrowed.** It matched a bare
+  `/usr/lib/systemd/system/*.service` path, so `install -Dm644 foo.service
+  "$pkgdir/usr/lib/systemd/system/"` — how a package *ships* a unit — and
+  `systemctl enable foo` in a scriptlet — how it enables the unit it just
+  shipped — both read as persistence. A scriptlet *writing* a unit onto the live
+  system remains fatal under `PERSIST-009`.
+- **`PERSIST-006` requires a unit path**, not a mention. It matched any
+  occurrence of `systemd-[a-z]+d`, so `systemd-journal-gatewayd` in a legitimate
+  scriptlet read as a service masquerading as a systemd internal.
+- **`PERSIST-008` removed.** It fired on `chmod +x` against a binary the package
+  itself installed — a permission fix, common in `-bin` packages whose upstream
+  tarball ships wrong modes. The rule conflated two acts: in the worm, the
+  `chmod` follows a Tor *download* of that path, and the download is the attack.
+  `PERSIST-007` catches the download. A `chmod` with nothing fetched behind it
+  distinguishes nothing, and the code was non-overridable — three real packages
+  would have been permanently unpassable on a permission bit.
+- **`CRED-001`/`CRED-002`/`CRED-003` scoped to shell content.** An
+  intrusion-detection tool's config naming `/etc/shadow` is a data file, not a
+  script.
+
+### Changed
+- **`--rules-only` reserves MALICIOUS for the non-overridable rule set.** It
+  previously mapped *any* critical hit to MALICIOUS, which is too strong for a
+  mode with no model to weigh anything. The bar is now the same one the model is
+  not allowed to clear when a model is present; everything else a critical rule
+  finds lands on SUSPICIOUS and says it needs review rather than pronouncing a
+  verdict.
+
+## [0.8.1] - 2026-08-24
+
+### Fixed
+- **`REF-002` reports concealment as a warning, not a verdict.** As shipped in
+  0.8.0 it was fatal on any dot-prefixed `install=`. A sweep of all 161,460 AUR
+  package branches found **~120 packages** using a bare `.install` / `.INSTALL`
+  as an ordinary naming convention, across years and unrelated maintainers —
+  every one of which would have been condemned with no way for the model to
+  clear it.
+
+  An intermediate fix narrowed the rule to `.<pkgname>.install` on the theory
+  that the per-package form was the worm's signature. That was also wrong, and
+  for a more instructive reason: it rested on a base rate rather than a
+  mechanism. Each AUR package is its own repository, so there is nothing for a
+  filename to collide with — a worm calling itself `.install` replicates exactly
+  as well and would evade the narrow check for free.
+
+  Fatality belongs to **behaviour**, not to a filename. The worm is caught by
+  what its scriptlet does, and is still MALICIOUS when the scriptlet is given an
+  entirely ordinary name. The `hidden_install_scriptlet` checklist id was
+  removed with it.
+
 ## [0.8.0] - 2026-08-24
 
 ### Added
@@ -30,16 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A referenced file that was **not supplied** means the scan is *incomplete*,
   which is a different claim from "the package is clean" and now blocks an `OK`
   verdict (`REF-001`, `REF-003`). `REF-002` reports a dot-prefixed
-  scriptlet as a **warning**, not a verdict: it hides from `ls` and from
-  dotfile-skipping tools, which is worth seeing, but a sweep of all 161,460 AUR
-  package branches found ~120 packages using a bare `.install` / `.INSTALL` as
-  an ordinary naming convention. A filename is not a behaviour — a worm that
-  renames itself evades any filename test for free — so fatality is reserved for
-  what a scriptlet *does*. `REF-004` reports a local source file that is
-  genuinely absent.
+  scriptlet, which hides from `ls` and from dotfile-skipping tools.
+  *(Shipped as a fatal finding; corrected in 0.8.1 — see below.)* `REF-004`
+  reports a local source file that is genuinely absent.
 - **Eleven rules for the worm family.** `PERSIST-007` (remote payload into a
-  system binary directory), `PERSIST-008` (`chmod +x` on a system path),
-  `PERSIST-009` (scriptlet writes a systemd unit), `PERSIST-010` (timer
+  system binary directory), `PERSIST-009` (scriptlet writes a systemd unit), `PERSIST-010` (timer
   directives in a scriptlet), `PKGMGR-001` (`pacman -S` from a scriptlet),
   `EXFIL-004` (`.onion` C2), `EXFIL-005` (SOCKS proxying), `CRED-004`
   (root/all-user SSH enumeration), `CRED-005` (`~/.ssh` moved or symlinked
@@ -527,7 +586,9 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/manticore-projects/aurscan/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/manticore-projects/aurscan/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/manticore-projects/aurscan/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/manticore-projects/aurscan/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/manticore-projects/aurscan/compare/v0.6.4...v0.7.0

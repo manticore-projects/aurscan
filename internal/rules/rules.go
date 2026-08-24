@@ -79,7 +79,15 @@ var catalog = []Rule{
 	// command-like invocation, so a bare "nc" inside C code, a licence string
 	// (CC-BY-NC-SA) or base64 signature data no longer matches.
 	mk("INSTALL-003", "Network in install script", Critical, `(?i)\b(curl|wget|ncat)\b|\bnc\s+-{0,2}\w`),
-	mk("PERSIST-001", "systemd service creation", Critical, `(?i)(systemctl\s+enable|/etc/systemd/system/.*\.service|/usr/lib/systemd/system/.*\.service)`),
+	// PERSIST-001 was Critical on a bare unit PATH, which made two entirely
+	// ordinary things look like persistence: `install -Dm644 foo.service
+	// "$pkgdir/usr/lib/systemd/system/"` is how a package SHIPS a unit, and
+	// `systemctl enable foo` in a scriptlet is how it tells systemd about the
+	// unit it just shipped. Neither is an attack. Writing a unit file from a
+	// scriptlet IS, and PERSIST-009 covers that fatally. So this is a warning:
+	// worth seeing, not worth condemning.
+	mk("PERSIST-001", "systemd service enabled or unit path referenced", High,
+		`(?i)(systemctl\s+(enable|start)|/etc/systemd/system/.*\.service)`),
 	// PERSIST-002 requires an ACTION, not a mention. The original pattern
 	// matched a bare ".timer" anywhere in any file, so a REUSE.toml listing
 	// "*.timer" among its licence globs — or a README, or a .desktop — read as
@@ -94,7 +102,12 @@ var catalog = []Rule{
 	mk("PERSIST-010", "systemd timer directives in an install scriptlet", High,
 		`(?im)^[ \t]*(OnBootSec|OnCalendar)[ \t]*=`),
 	mk("PERSIST-004", "boot script modification", Critical, `(?i)/etc/rc\.local|/etc/profile\.d/`),
-	mk("PERSIST-006", "systemd masquerading", Critical, `(?i)systemd-[a-z]+d\b`),
+	// PERSIST-006 matched ANY mention of a systemd component name, so
+	// `systemd-journal-gatewayd` in a legitimate scriptlet — or in a pkgdesc —
+	// read as a service masquerading as a systemd internal. The signal is a
+	// package INSTALLING a unit under such a name, not naming one.
+	mk("PERSIST-006", "unit file named like a systemd internal", High,
+		`(?i)/(etc|usr/lib|run)/systemd/system/systemd-[a-z]+d[^/\n]*\.(service|socket|timer)`),
 	// --- Critical: mining / exfil -------------------------------------------
 	mk("CRYPTO-001", "Mining pool connection", Critical, `(?i)stratum\+tcp://|pool\.(minexmr|supportxmr|nanopool)`),
 	mk("CRYPTO-002", "Cryptominer binary", Critical, `(?i)\b(xmrig|minerd|cpuminer|ethminer)\b`),
@@ -134,8 +147,14 @@ var catalog = []Rule{
 	mk("PKGMGR-001", "pacman invoked from an install scriptlet", Critical, `(?i)\bpacman\s+-\S*S`),
 	mk("PERSIST-007", "Remote payload written into a system binary directory", Critical,
 		`(?i)\b(curl|wget)\b[^\n]*\s/(usr/local/s?bin|usr/s?bin|opt)/`),
-	mk("PERSIST-008", "chmod +x on a system binary path", Critical,
-		`(?i)\bchmod\b[^\n]*\+x[^\n]*\s/(usr/local/s?bin|usr/s?bin|opt)/`),
+	// No PERSIST-008. It fired on `chmod +x /usr/bin/<something the package
+	// itself installed>` — a permission fix, common in -bin packages whose
+	// upstream tarball ships wrong modes, and it hit 3 of 120 real packages
+	// with hidden scriptlets. The rule conflated two different acts: in the
+	// xsnow worm the chmod follows a Tor DOWNLOAD of that same path, and the
+	// download is the attack. PERSIST-007 catches the download. A chmod with
+	// no fetch behind it means nothing, and this code was in fatalCodes, where
+	// a false positive makes a package permanently unpassable.
 	mk("PERSIST-009", "install scriptlet writes a systemd unit file", Critical,
 		`(?i)>\s*/(etc|usr/lib|run)/systemd/system/`),
 	// --- Critical/High: Unicode obfuscation (Trojan Source / homoglyph) ------
@@ -455,6 +474,10 @@ func Scan(files map[string]string) []Hit {
 			if executedOnly[r.Code] && !isExecutedFile(name) {
 				continue
 			}
+			// And some are meaningless INSIDE a scriptlet.
+			if notInInstall[r.Code] && isInstall {
+				continue
+			}
 			// And some are meaningless outside shell content entirely.
 			if shellOnly[r.Code] && !isShellFile(name) {
 				continue
@@ -620,15 +643,26 @@ var shellOnly = map[string]bool{
 	// and falls back to raw-text matching, which is where that FP came from.
 	"PRIV-001": true, "PRIV-003": true,
 	"DLE-001": true, "DLE-002": true, "INSTALL-003": true,
+	// CRED-003 fired on aide.conf — an intrusion-detection tool's config file
+	// naturally names /etc/shadow. Reading a path out of a data file says
+	// nothing about what the package does.
+	"CRED-003": true, "CRED-001": true, "CRED-002": true,
 }
 
 // installOnly lists rules that only make sense inside a scriptlet: in a
 // PKGBUILD these paths are written under $pkgdir by fakeroot, but a scriptlet
 // has no $pkgdir — every path it touches is the live system.
+// notInInstall lists rules whose premise does not survive inside a scriptlet.
+// PRIV-001 asks "does the build try to gain privileges?" — but a scriptlet is
+// ALREADY running as root, so there is nothing to gain. `sudo chmod 644
+// /etc/netctl/*` in a post_install is a redundant sudo, not an escalation.
+var notInInstall = map[string]bool{
+	"PRIV-001": true, "PRIV-003": true,
+}
+
 var installOnly = map[string]bool{
 	"INSTALL-003": true, "PKGMGR-001": true,
-	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
-	"PERSIST-010": true,
+	"PERSIST-007": true, "PERSIST-009": true, "PERSIST-010": true,
 }
 
 // fatalCodes are findings a model is NOT permitted to talk its way out of.
@@ -639,7 +673,7 @@ var fatalCodes = map[string]bool{
 	// install-scriptlet worm family
 	"EXFIL-004": true, "WORM-001": true, "WORM-002": true, "WORM-003": true,
 	"CRED-004": true, "CRED-005": true, "PKGMGR-001": true,
-	"PERSIST-007": true, "PERSIST-008": true, "PERSIST-009": true,
+	"PERSIST-007": true, "PERSIST-009": true,
 	// REF-002 is deliberately absent. A hidden scriptlet is a filename, not a
 	// behaviour: ~120 AUR packages use a bare .install innocently, and a worm
 	// that renames itself evades any filename test for free. Guilt lives in
@@ -742,7 +776,6 @@ var checkIDFor = map[string]string{
 	"WORM-003":    "install_scriptlet_worm",
 	"REF-002":     "incomplete_scan", // warning tier: concealment is a signal, not proof
 	"PERSIST-007": "scriptlet_system_takeover",
-	"PERSIST-008": "scriptlet_system_takeover",
 	"PERSIST-009": "scriptlet_system_takeover",
 	"PKGMGR-001":  "scriptlet_system_takeover",
 	"CRED-004":    "credential_access",
