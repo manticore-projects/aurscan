@@ -233,6 +233,101 @@ func buildPrompt(pkg string, files Files, sig Signals) string {
 
 var jsonBlobRe = regexp.MustCompile(`(?s)\{.*\}`)
 
+// jsonFenceRe finds a ```json … ``` fenced block, which models emit even when
+// told not to.
+var jsonFenceRe = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
+
+// extractJSONObject pulls the model's JSON object out of a reply that may also
+// contain prose.
+//
+// The old approach was a greedy `\{.*\}` over the whole reply, and it failed
+// whenever the prose itself contained a brace — which it does constantly, since
+// the model quotes shell back at us:
+//
+//	… `--cache "${srcdir}/npm-cache"` — cache goes into $srcdir …
+//	```json
+//	{"checks": []}
+//	```
+//
+// The first `{` there belongs to ${srcdir}, so the match ran from mid-sentence
+// to the last brace in the file and produced garbage. The model's answer was
+// perfectly valid; the extractor could not find it. Two of twenty packages in a
+// sample failed this way, and every one of them was a clean verdict thrown
+// away — a fail-closed SUSPICIOUS on a package the model had cleared.
+//
+// Strategy, in order: a fenced ```json block; then a balanced-brace scan
+// anchored at each `{` from the END of the reply backwards, since the answer
+// comes last; then the old greedy match as a final fallback.
+func extractJSONObject(raw string) string {
+	if m := jsonFenceRe.FindStringSubmatch(raw); m != nil {
+		if json.Valid([]byte(m[1])) {
+			return m[1]
+		}
+	}
+	// Scan forward, and require the candidate to LOOK like a verdict. Both
+	// halves matter: scanning backwards finds the innermost object first, and a
+	// single check entry — {"id":…,"triggered":true} — is perfectly valid JSON
+	// on its own, so "first valid object" would silently return one finding as
+	// though it were the whole reply.
+	var longest string
+	for i := strings.IndexByte(raw, '{'); i >= 0; {
+		obj := balancedObject(raw[i:])
+		if obj != "" && json.Valid([]byte(obj)) {
+			var probe map[string]json.RawMessage
+			if json.Unmarshal([]byte(obj), &probe) == nil {
+				if _, ok := probe["checks"]; ok {
+					return obj
+				}
+				if _, ok := probe["verdict"]; ok {
+					return obj
+				}
+			}
+			if len(obj) > len(longest) {
+				longest = obj
+			}
+		}
+		next := strings.IndexByte(raw[i+1:], '{')
+		if next < 0 {
+			break
+		}
+		i += 1 + next
+	}
+	if longest != "" {
+		return longest
+	}
+	return jsonBlobRe.FindString(raw)
+}
+
+// balancedObject returns the substring of s from its leading '{' to the brace
+// that closes it, or "" if the braces never balance. String literals are
+// tracked so a brace inside a quoted snippet does not affect the depth.
+func balancedObject(s string) string {
+	if len(s) == 0 || s[0] != '{' {
+		return ""
+	}
+	depth, inStr, esc := 0, false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case esc:
+			esc = false
+		case c == '\\' && inStr:
+			esc = true
+		case c == '"':
+			inStr = !inStr
+		case inStr:
+			// nothing
+		case c == '{':
+			depth++
+		case c == '}':
+			if depth--; depth == 0 {
+				return s[:i+1]
+			}
+		}
+	}
+	return ""
+}
+
 // parseVerdictResult extracts the verdict and reports whether it is GENUINE: a
 // real JSON object that produced a usable result. Two shapes are accepted:
 //
@@ -249,7 +344,7 @@ var jsonBlobRe = regexp.MustCompile(`(?s)\{.*\}`)
 // known verdict string) return false so the chain in Scan falls through to the
 // next backend rather than stopping on a backend that produced no usable result.
 func parseVerdictResult(raw string) (Verdict, bool) {
-	blob := jsonBlobRe.FindString(raw)
+	blob := extractJSONObject(raw)
 	if blob == "" {
 		dbg("parseVerdict: no JSON object found in model output (issue #17)")
 		return failClosed("Scanner returned no parseable result"), false

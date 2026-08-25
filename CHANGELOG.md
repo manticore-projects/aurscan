@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Build-cache hygiene warns but no longer blocks.** `cargo build`/`cargo fetch`
+  without a confined `CARGO_HOME`, and `go build` without `GOPATH`/`GOMODCACHE`,
+  do write to `~/.cargo` and `~/go` — and they do so on essentially every Rust
+  and Go package in the AUR. Reported at warning level it pushed 7 of 20 sampled
+  packages to SUSPICIOUS and buried the findings that mattered. There is now an
+  info-tier checklist id, `build_cache_unconfined`, for the model to use instead
+  of `writes_outside_build`, and `--rules-only` reserves SUSPICIOUS for
+  high-severity and critical matches: medium and informational hits are shown
+  with the verdict left at OK. Blocking on something true of nearly every
+  package in an ecosystem trains people to pass `--force`.
+
 ### Fixed
+- **The model's answer is no longer thrown away when it reasons in prose.** JSON
+  was extracted with a greedy `\{.*\}` over the whole reply, so the first brace
+  in the model's own prose — invariably inside a `${srcdir}` or `${pkgdir}` it
+  was quoting back — started the match, and it ran to the last brace in the
+  file. The result was "Scanner returned malformed JSON (fail-closed)" on 2 of
+  20 packages in a sample, and in both the model had returned a perfectly valid
+  `{"checks": []}`: a clean verdict discarded as SUSPICIOUS.
+
+  Extraction now prefers a fenced ` ```json ` block, then scans forward for a
+  brace-balanced object that is valid JSON *and* carries a `checks` or `verdict`
+  key. Both halves of that test are load-bearing: string literals are tracked so
+  a brace inside an evidence snippet does not close the object, and requiring
+  the key stops a single check entry — valid JSON on its own — being returned as
+  though it were the whole reply.
 - **Behavioural rules no longer match package metadata.** `pkgdesc`, `url`,
   `license`, `groups`, `keywords`, `arch` and the version fields describe a
   package; nothing on their right-hand side executes. A sweep of the live AUR

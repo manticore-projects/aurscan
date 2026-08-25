@@ -146,9 +146,18 @@ func rulesOnlyVerdict(pkg string, hits []rules.Hit, note string) scan.Result {
 	case rules.Floor(hits, StrictFloor()) == "MALICIOUS":
 		v.Verdict = "MALICIOUS"
 		v.Summary = "Static rules matched non-overridable patterns (" + note + ")."
-	case len(hits) > 0:
+	case rules.Worst(hits) == rules.Critical || rules.Worst(hits) == rules.High:
 		v.Verdict = "SUSPICIOUS"
 		v.Summary = "Static rules matched (" + note + "). Without a model these need review, not a verdict."
+	case len(hits) > 0:
+		// Medium/info hits — build-cache confinement, HTTP source URLs, a
+		// missing local source file — are worth showing and are not grounds to
+		// stop a build. BLD-001/BLD-002 alone apply to nearly every Rust and Go
+		// package in the AUR; blocking on them trains people to pass --force.
+		v.Verdict = "OK"
+		v.Confidence = 40
+		v.Summary = fmt.Sprintf("No high-severity static matches (%s); %d informational item(s) noted. "+
+			"Note: without an LLM this is a weak signal.", note, len(hits))
 	default:
 		v.Verdict = "OK"
 		v.Confidence = 40

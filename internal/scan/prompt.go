@@ -162,7 +162,13 @@ WARNING checks (a hit means the package needs review before building):
   supplied to you.
 - other_warning — another behaviour warranting suspicion not covered above.
 
-INFO:
+INFO (recorded and shown, but never a reason to block a build):
+- build_cache_unconfined — cargo build / cargo fetch without CARGO_HOME, or
+  go build without GOPATH/GOMODCACHE, confined to $srcdir. This writes the
+  dependency cache to ~/.cargo or ~/go. It is true of nearly every Rust and Go
+  package in the AUR and is a packaging-hygiene issue, NOT a security finding:
+  use this id rather than writes_outside_build for it. A cargo install of a
+  build tool into ~/.cargo/bin belongs here too.
 - note — anything worth recording that is not itself a risk.
 
 Respond with ONLY a single JSON object, no markdown fences, no prose:

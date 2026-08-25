@@ -71,7 +71,14 @@ var checkCatalog = map[string]checkDef{
 	"other_warning":                 {"warning", "Another behaviour warranting suspicion not covered by a specific check"},
 
 	// --- info: never changes the verdict on its own -----------------------
-	"note": {"info", "Auditor note (not itself a risk)"},
+	// Build-cache hygiene is real and worth telling the user about, but it is
+	// not a security finding: `cargo build` and `go build` without a confined
+	// CARGO_HOME/GOMODCACHE write to ~/.cargo and ~/go on essentially EVERY
+	// Rust and Go package in the AUR. Reported at warning tier it pushed 7 of
+	// 20 sampled packages to SUSPICIOUS and drowned the findings that mattered.
+	// Info tier: shown, never blocking.
+	"build_cache_unconfined": {"info", "Build writes its dependency cache outside $srcdir (~/.cargo, ~/go) — packaging hygiene, not a security risk"},
+	"note":                   {"info", "Auditor note (not itself a risk)"},
 }
 
 // severityRank orders severities for "worst wins" reduction.
