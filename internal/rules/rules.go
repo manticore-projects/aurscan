@@ -296,7 +296,7 @@ func checkCacheConfinement(name, text string, cmds []cmdLine, parsed bool,
 		{"BLD-002", "cargo without confined CARGO_HOME (writes to ~/.cargo)",
 			cargoWriteCmd, cargoWriteRaw, cargoConfined},
 	} {
-		if firstLiveMatch(text, c.confined, true) >= 0 {
+		if firstLiveMatch(text, c.confined, true, true) >= 0 {
 			continue // caches are confined (or vendored); nothing to report
 		}
 		if parsed {
@@ -310,7 +310,7 @@ func checkCacheConfinement(name, text string, cmds []cmdLine, parsed bool,
 			}
 			continue
 		}
-		if idx := firstLiveMatch(text, c.raw, true); idx >= 0 {
+		if idx := firstLiveMatch(text, c.raw, true, true); idx >= 0 {
 			add(c.code, c.rname, Medium, name, lineAround(text, idx))
 		}
 	}
@@ -548,7 +548,8 @@ func Scan(files map[string]string) []Hit {
 			// Data-literal rules (and the fallback when shell parsing failed):
 			// match the raw text, skipping commented-out lines except where the
 			// pattern is meaningful in comments (AI injection, bidi/zero-width).
-			idx := firstLiveMatch(text, r.re, !scanEvenInComments(r.Code))
+			idx := firstLiveMatch(text, r.re,
+				!scanEvenInComments(r.Code), !scanEvenInMetadata(r.Code))
 			if idx < 0 {
 				continue
 			}
@@ -926,13 +927,102 @@ func checkCatalogSeverityIsCritical(id string) bool {
 	return false
 }
 
-// firstLiveMatch returns the start offset of the first match of re that does not
-// fall on a full-line comment, or -1 if there is none.
-func firstLiveMatch(text string, re *regexp.Regexp, skipComments bool) int {
+// metadataAssign matches the PKGBUILD/.SRCINFO fields that describe a package
+// rather than doing anything: the description, the names, the homepage, the
+// licence and the search keywords. Nothing on the right-hand side of these ever
+// executes.
+// metadataFields are the assignment names whose value merely describes the
+// package. Shared with the shell renderer so these never enter the deobfuscated
+// command view either.
+// pkgname is deliberately absent: a package NAMED xmrig-bin is a miner, and
+// CRYPTO-002 detects miners largely by name. A package DESCRIBING xmrig is not
+// one. The name is what the package IS; the description is prose about it.
+var metadataFields = map[string]bool{
+	"pkgdesc": true, "url": true, "license": true,
+	"groups": true, "keywords": true, "arch": true,
+	"pkgver": true, "pkgrel": true, "epoch": true,
+}
+
+var metadataAssign = regexp.MustCompile(
+	`(?m)^[ \t]*(pkgdesc|url|license|groups|keywords|arch|pkgver|pkgrel|epoch)[ \t]*=`)
+
+// isMetadataAt reports whether the offset falls on a line that merely DESCRIBES
+// the package.
+//
+// The case that prompted this: aur-malware-check-git carries
+//
+//	pkgdesc="Detection tools for the June 2026 atomic-lockfile AUR
+//	         supply-chain attack …"
+//
+// and NPM-002 — a non-overridable rule that matches the campaign's payload
+// names — flagged it. A tool for detecting an attack was reported as malicious
+// for naming the attack it detects.
+//
+// It is the same defect as PERSIST-002 matching "*.timer" in a REUSE.toml and
+// PRIV-001 matching `optdepends = sudo:` in a .SRCINFO: a rule about behaviour
+// matching prose. A description is not a behaviour, and no amount of hostile
+// text in one can make a package do anything — the model still reads the file
+// and will judge a suspicious description on its own terms.
+//
+// The AI-* and Unicode rules are exempt, because for THOSE the prose IS the
+// attack surface: prompt injection aimed at a reviewer works precisely by
+// living in text a human skims, and Trojan Source hides in it.
+func isMetadataAt(text string, idx int) bool {
+	start := strings.LastIndexByte(text[:idx], '\n') + 1
+	end := strings.IndexByte(text[start:], '\n')
+	if end < 0 {
+		end = len(text)
+	} else {
+		end += start
+	}
+	line := text[start:end]
+	if !metadataAssign.MatchString(line) {
+		return false
+	}
+	// Only the value counts as metadata; a rule matching the field NAME itself
+	// (e.g. a suspicious pkgname) is still a match on the line.
+	return idx > start
+}
+
+// scanEvenInMetadata lists rules that must still see a metadata line.
+//
+// Two groups. First, rules for which the prose IS the attack surface: text
+// addressed to an AI reviewer works precisely by living where a human skims,
+// and Trojan Source hides in exactly that text.
+//
+// Second — and this is the one that is easy to get wrong — the rules whose
+// entire subject is the metadata. URL-002 exists to notice a link shortener in
+// url=; SRC-00x judges where source=() points; CHK-00x reads the checksum
+// arrays; REF-00x resolves install= and source= by name. Excluding metadata
+// from those would not reduce false positives, it would switch them off.
+func scanEvenInMetadata(code string) bool {
+	if isAIRule(code) {
+		return true
+	}
+	switch {
+	case strings.HasPrefix(code, "UNI-"),
+		strings.HasPrefix(code, "URL-"),
+		strings.HasPrefix(code, "SRC-"),
+		strings.HasPrefix(code, "NET-"),
+		strings.HasPrefix(code, "CHK-"),
+		strings.HasPrefix(code, "REF-"):
+		return true
+	}
+	return false
+}
+
+// firstLiveMatch returns the start offset of the first match of re that falls
+// on neither a full-line comment nor a metadata assignment, or -1 if there is
+// none.
+func firstLiveMatch(text string, re *regexp.Regexp, skipComments, skipMetadata bool) int {
 	for _, loc := range re.FindAllStringIndex(text, -1) {
-		if !skipComments || !isCommentAt(text, loc[0]) {
-			return loc[0]
+		if skipComments && isCommentAt(text, loc[0]) {
+			continue
 		}
+		if skipMetadata && isMetadataAt(text, loc[0]) {
+			continue
+		}
+		return loc[0]
 	}
 	return -1
 }

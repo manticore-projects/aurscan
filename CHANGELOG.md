@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Behavioural rules no longer match package metadata.** `pkgdesc`, `url`,
+  `license`, `groups`, `keywords`, `arch` and the version fields describe a
+  package; nothing on their right-hand side executes. A sweep of the live AUR
+  found `aur-malware-check-git` reported as MALICIOUS by `NPM-002` — a
+  non-overridable rule matching the Atomic Arch payload names — because its
+  `pkgdesc` names the campaign it exists to detect. A tool for finding an attack,
+  flagged for naming the attack.
+
+  The exclusion applies to the raw-text path and to the deobfuscated command
+  view, since assignments are rendered into the latter. Two groups of rules are
+  exempt: `AI-*` and `UNI-*`, for which the prose IS the attack surface — prompt
+  injection works by living where a reviewer skims, and Trojan Source hides
+  there — and `URL-*`, `SRC-*`, `NET-*`, `CHK-*`, `REF-*`, whose entire subject
+  is the metadata. Excluding metadata from those would not reduce false
+  positives, it would switch them off.
+
+  `pkgname` is deliberately still in scope: a package *named* `xmrig-bin` is a
+  miner, and `CRYPTO-002` detects miners largely by name. The name is what a
+  package IS; the description is prose about it.
+
 ## [0.8.3] - 2026-08-24
 
 ### Fixed

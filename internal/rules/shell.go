@@ -219,15 +219,24 @@ func renderRedirs(b *strings.Builder, st *syntax.Stmt) {
 func renderCall(ce *syntax.CallExpr, st *syntax.Stmt) string {
 	var b strings.Builder
 	for _, as := range ce.Assigns {
-		if as.Name != nil {
-			b.WriteString(as.Name.Value)
-			b.WriteByte('=')
-			if as.Value != nil {
-				v, _ := resolveWord(as.Value)
-				b.WriteString(v)
-			}
-			b.WriteByte(' ')
+		if as.Name == nil {
+			continue
 		}
+		// A metadata field describes the package; its value never executes.
+		// Keeping pkgdesc= out of the command view is what stops a rule about
+		// behaviour from matching prose — aur-malware-check-git names the
+		// Atomic Arch payloads in its description because detecting them is the
+		// point of the package.
+		if metadataFields[as.Name.Value] {
+			continue
+		}
+		b.WriteString(as.Name.Value)
+		b.WriteByte('=')
+		if as.Value != nil {
+			v, _ := resolveWord(as.Value)
+			b.WriteString(v)
+		}
+		b.WriteByte(' ')
 	}
 	if len(ce.Args) == 0 {
 		renderRedirs(&b, st)
