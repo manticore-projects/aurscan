@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-25
+
 ### Changed
 - **Build-cache hygiene warns but no longer blocks.** `cargo build`/`cargo fetch`
   without a confined `CARGO_HOME`, and `go build` without `GOPATH`/`GOMODCACHE`,
@@ -20,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package in an ecosystem trains people to pass `--force`.
 
 ### Fixed
+- **A full sweep of the live AUR.** All 111,018 live packages were scanned
+  offline with static rules only. Three trip a non-overridable rule, all of them
+  piping a canonical upstream installer to a shell at build time
+  (`sh.rustup.rs`, `get-ghcup.haskell.org`, a vendor installer). Nothing
+  resembling the `xsnow` worm. That result is a floor rather than a clearance:
+  it says no package matched the patterns someone thought to write. A closer
+  look at 20 packages the rules did *not* flag found a `package()` running
+  `sudo cp … /usr/bin` outside fakeroot, a patch fetched from a mutable GitLab
+  merge-request diff URL, and a `pkgver` that does not match the version its
+  source URL downloads — none malicious, none expressible as a regex.
 - **The model's answer is no longer thrown away when it reasons in prose.** JSON
   was extracted with a greedy `\{.*\}` over the whole reply, so the first brace
   in the model's own prose — invariably inside a `${srcdir}` or `${pkgdir}` it
@@ -693,7 +705,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/manticore-projects/aurscan/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/manticore-projects/aurscan/compare/v0.8.0...v0.8.1
