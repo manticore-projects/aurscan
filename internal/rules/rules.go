@@ -237,6 +237,14 @@ var catalog = []Rule{
 	mk("ENV-002", "PATH overwrite", High, `(?m)^\s*PATH=`),
 	// --- Medium: weaker signals ---------------------------------------------
 	mk("NET-001", "HTTP source URL", Medium, `(?i)source=\([^)]*http://`),
+	// `curl -k` / `--insecure` / `wget --no-check-certificate` turns an https
+	// URL into an unauthenticated one: the transport is encrypted, the peer is
+	// whoever answers. 1panel-stable-bin downloads its binary this way and then
+	// verifies it against a checksum file fetched from the same host, so an
+	// attacker in that position supplies both halves. Nothing caught it.
+	// Case-SENSITIVE deliberately: curl -k is --insecure, curl -K is --config.
+	mk("NET-003", "TLS certificate verification disabled", High,
+		`\b(curl\b[^\n|]*\s(-[a-zA-Z]*k\b|--insecure\b)|wget\b[^\n|]*--no-check-certificate\b)`),
 	// SRC-001 is handled specially in Scan via the reputable-host allowlist
 	// (it cannot be expressed as a single regex); see checkGitHosts.
 }
@@ -752,7 +760,14 @@ var fatalCodes = map[string]bool{
 	// means "no legitimate form exists"; a knowingly-installed miner has one.
 	// Mining hidden in an unrelated package is still caught, because a model
 	// would not clear that.
-	"DLE-001": true, "DLE-002": true,
+	// DLE-001/DLE-002 are deliberately NOT here. `curl … | sh` at build time is
+	// dangerous and always reported — the content is unpinned, absent from
+	// source=(), unchecksummed — but it is not evidence of malice. A full-AUR
+	// sweep found the only three occurrences were sh.rustup.rs,
+	// get-ghcup.haskell.org and a vendor's own installer. fatalCodes means "no
+	// legitimate form exists"; a project's own installer is one. Piping from a
+	// host unrelated to the package is still condemned, by the model, which can
+	// tell the difference — and which a fatal code would pre-empt.
 	"SHELL-001": true, "SHELL-002": true, "EXFIL-003": true,
 	"OBF-004": true, "UNI-001": true, "UNI-002": true,
 	// attempts to steer the reviewer itself
@@ -858,8 +873,20 @@ var checkIDFor = map[string]string{
 	"CRED-002":  "credential_access",
 	"CRED-003":  "credential_access",
 	"EXFIL-003": "exfiltration",
-	"DLE-001":   "pipe_to_shell",
-	"DLE-002":   "pipe_to_shell",
+	// NOT pipe_to_shell. That id is critical and means "the script's author is
+	// not the software's author" — a judgement about WHOSE host it is, which a
+	// regex cannot make. DLE-001/002 only know that something is piped into a
+	// shell unpinned, and the full-AUR sweep found every occurrence was the
+	// project's own installer (sh.rustup.rs, get-ghcup.haskell.org, a vendor's
+	// script).
+	//
+	// So the static contribution is the cautious classification, and the model
+	// is free to escalate to pipe_to_shell when it can see the host has no
+	// claim to the package. Mapping it to the critical id instead put the
+	// verdict back at MALICIOUS through deriveVerdict even after DLE was taken
+	// out of fatalCodes — the same conclusion by a different route.
+	"DLE-001":   "unpinned_upstream_installer",
+	"DLE-002":   "unpinned_upstream_installer",
 	"NPM-002":   "unrelated_pkg_manager_exec",
 	"SHELL-001": "remote_code_exec",
 	"SHELL-002": "remote_code_exec",
@@ -875,6 +902,36 @@ var checkIDFor = map[string]string{
 	"REF-001": "incomplete_scan",
 	"REF-003": "incomplete_scan",
 	"REF-004": "incomplete_scan",
+}
+
+// AllChecks renders EVERY hit as a checklist entry, at the tier its severity
+// implies. FloorChecks covers only the hits that constrain the verdict; this
+// covers the rest too, so an offline scan can still report what it found in the
+// checklist vocabulary — which is the field a sweep filters on, because a check
+// id says what a package DOES while a verdict label says what a scanner called
+// it.
+//
+// It never drives a verdict. Only Floor does that.
+func AllChecks(hits []Hit) []FloorCheck {
+	out := make([]FloorCheck, 0, len(hits))
+	for _, h := range hits {
+		id, ok := checkIDFor[h.Code]
+		if !ok {
+			switch h.Severity {
+			case Critical, High:
+				id = "other_warning"
+			default:
+				id = "note"
+			}
+		}
+		out = append(out, FloorCheck{
+			ID:       id,
+			File:     h.File,
+			Evidence: h.Snippet,
+			Note:     h.Code + " " + h.Name + " (static rule)",
+		})
+	}
+	return out
 }
 
 // FloorChecks renders the floor-triggering hits as checklist entries. The set

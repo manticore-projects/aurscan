@@ -388,6 +388,8 @@ aurscan --score ./PKGBUILD        # exit code = trust score
 aurscan --score ./builddir        # a directory works too
 cat PKGBUILD | aurscan --score -  # from stdin
 
+aurscan --json ./builddir         # full result as JSON: verdict, score, check_ids, findings
+
 score=$(aurscan --score - < PKGBUILD)   # capture just the number
 [ "$score" -ge 67 ] || echo "risky (score $score)"
 ```
@@ -422,6 +424,7 @@ aurscan --debug --score ./PKGBUILD
 | `AURSCAN_INSTRUCTIONS` | — | path to extra auditor instructions (appended) |
 | `AURSCAN_RULES_ONLY` | — | `1` = static rules only, never call a model |
 | `AURSCAN_STRICT_FLOOR` | — | `1` = any critical static hit prevents an `OK` verdict, not only the non-overridable ones |
+| `AURSCAN_FETCH_REMOTE` | — | `1` = retrieve the scripts the package pipes into a shell and include them as labelled evidence. **Off by default**: it contacts hosts the package chooses. Retrieved content can only raise a verdict, never clear one |
 | `AURSCAN_NO_CACHE` | — | `1` = disable the verdict cache (no read, no write) |
 | `AURSCAN_CACHE_DIR` | `$XDG_CACHE_HOME/aurscan/verdicts` | verdict-cache location |
 | `AURSCAN_CACHE_TTL` | `30` | verdict-cache lifetime in **days**; `0` = never expire |
@@ -467,6 +470,10 @@ aurscan --rules-only <pkgname|./dir>     # or set AURSCAN_RULES_ONLY=1
 **Calibrated against real packages, not just test cases.** Rules are measured against two corpora cloned from the AUR: ~158 installed packages, and the ~120 packages that ship a *hidden* install scriptlet — a population the first corpus barely contains, and therefore the one where the scriptlet rules had never actually been tested. A third runs over all 19,934 packages that declare `install=`. Those runs found 32 and then 195 packages wrongly reported as malicious, and led to sixteen rule corrections: `PRIV-001` cannot mean anything inside a scriptlet that already runs as root; shipping a `.service` file and enabling it are how packaging works, not persistence; a config file naming `/etc/shadow` is data, not a script; `chmod +x` on a binary the package itself installed is a permission fix, not an attack — the *download* is what matters, and a separate rule catches that; and `'"'"'` is the only way to put a single quote inside a single-quoted string, so it cannot be treated as obfuscation. The `install=` sweep now reports 7 packages of 19,934, 6 of them genuine, and the worm is still flagged on non-overridable rules alone.
 
 A fourth sweep covers all 111,018 live AUR packages, offline and static-only. It flags three: each pipes a canonical upstream installer (`sh.rustup.rs`, `get-ghcup.haskell.org`, a vendor script) to a shell at build time. Nothing resembling the `xsnow` worm.
+
+**The verdict and the check ids answer different questions, and `--json` gives you both.** At an install prompt, fail-safe is right: a package piping an unpinned script into a shell should say MALICIOUS and let you decide. Reporting that same package to a mailing list as malware would be something else entirely — an accusation resting on a label that is genuinely ambiguous, because whether a download host "belongs to" a project is a judgement rather than a pattern. The check ids are not ambiguous in the same way: `install_scriptlet_worm`, `credential_access` and `exfiltration` have no benign form, while `unpinned_upstream_installer` and `privilege_persistence` plainly do. Filter a sweep on `check_ids` and you can say what a package *does* instead of what a scanner called it.
+
+The same distinction runs through the checks themselves. Several of them used to report a dangerous behaviour and a malicious one under one id, which forced the verdict: an Electron package running `npm install` to build itself was reported as the Atomic Arch signature, and a scriptlet enabling the service it ships was reported as privilege escalation. Each critical check that has a legitimate form now has a warning-tier sibling, so a scan can say **dangerous, not malware** — and mean it.
 
 That number is a floor, not a clearance, and it is worth being plain about why. Static rules match patterns; the problems worth catching often are not patterns. A closer look at twenty packages the rules did **not** flag turned up a `package()` running `sudo cp … /usr/bin` outside fakeroot, a patch fetched from a mutable GitLab merge-request diff URL, and a `pkgver` that disagrees with the version its own source URL downloads. None malicious — and none expressible as a regex, because writing one rule per case is easy while enumerating the cases in advance is not. That gap is what the model pass exists to cover.
 

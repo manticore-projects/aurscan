@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-25
+
+### Added
+- **`aurscan --json <file|dir|->`** prints the whole result — verdict,
+  confidence, score, summary, `check_ids`, checks and findings — as one JSON
+  object.
+
+  The verdict LABEL and the CHECK IDS answer different questions, and conflating
+  them is how a scanner damages its own credibility. At an install prompt,
+  fail-safe is right: a package piping an unpinned script into a shell should
+  say MALICIOUS and let the user decide. But reporting that same package to a
+  mailing list as malware would be an accusation resting on a label that is
+  genuinely ambiguous — whether a download host "belongs to" a project is a
+  judgement, and the model lands either side of it on the same package. The
+  check ids are not ambiguous in the same way: `install_scriptlet_worm`,
+  `credential_access` and `exfiltration` have no benign form, while
+  `unpinned_upstream_installer` and `privilege_persistence` plainly do. Filter a
+  sweep on ids and a report can say what a package DOES rather than what a
+  scanner called it.
+
+  `rules.AllChecks` maps every static hit to a check id, so `check_ids` is
+  populated under `--rules-only` too — otherwise the field would be empty in
+  precisely the offline sweep it exists for. It records; only `Floor` escalates.
+- **`AURSCAN_FETCH_REMOTE=1`** retrieves the scripts a package pipes into a
+  shell and includes them as labelled evidence, with a sha256 and the note that
+  this is what the URL served *at scan time*.
+
+  Off by default, and the asymmetry is structural rather than a prompt
+  instruction: `DLE-001`/`DLE-002` fire on the PKGBUILD before any fetch, so
+  retrieved content can only ever ADD findings. A benign script leaves the
+  verdict where it was and saves the reviewer a `curl`; a hostile one escalates.
+  Anything else would be a way to launder a finding — fetch once, look clean,
+  pass — on content whose defining property is that it can change after you look.
+  A host can also serve one thing to an obvious scanner and another to a real
+  build, which is why looking must never be mistaken for clearing.
+- **`NET-003`** — TLS verification disabled (`curl -k`/`--insecure`,
+  `wget --no-check-certificate`). Deliberately case-sensitive: `curl -K` is
+  `--config`. Found on a package that also verifies its download against a
+  checksum fetched from the same host, so one attacker supplies both halves.
+
+### Changed
+- **Behaviour is now separable from intent.** Several checks reported a
+  dangerous behaviour and a malicious one with the same id, so a scan could not
+  say "dangerous, not malware" — the verdict was forced. Four warning-tier
+  siblings now cover the legitimate forms: `pkg_manager_build_deps` (an Electron
+  package running `npm install` to build itself), `service_enabled_by_scriptlet`
+  (against Arch guidelines, not an attack), `sudoers_for_own_service` (a drop-in
+  scoped to the package's own daemon), `packaging_policy_violation`. Three more
+  follow for the same reason: `unpinned_upstream_installer`, `telemetry`,
+  `insecure_tls_fetch`.
+
+  `pipe_to_shell` and `privilege_persistence` were narrowed to match. The latter
+  had ended "…or a pacman hook the package installs for itself that runs code",
+  which a model reasonably stretched to cover `systemctl enable --now` in a
+  `post_install`.
+- **`DLE-001`/`DLE-002` are no longer non-overridable, and map to
+  `unpinned_upstream_installer`.** A full-AUR sweep found every occurrence of
+  `curl … | sh` was the project's own installer — `sh.rustup.rs`,
+  `get-ghcup.haskell.org`, a vendor's script. The non-overridable set means "no
+  legitimate form exists", and a project's own installer is one. A regex cannot
+  tell whose host a URL belongs to, so the static contribution is the cautious
+  classification and the model escalates when it can see the host has no claim
+  to the package.
+- **`CRYPTO-001`/`CRYPTO-002` are no longer non-overridable.** They are correct
+  that `xmrig-bin` is a miner; a verdict the model cannot clear stops someone
+  installing one deliberately.
+
+### Fixed
+- **A hedged pair no longer resolves upward.** Asked to choose between a
+  critical check and its benign sibling, the model sometimes reported both — one
+  `curl … | sh` line as `pipe_to_shell` AND `unpinned_upstream_installer`, with
+  identical evidence and a note conceding "even if the host belongs to the
+  upstream vendor". `deriveVerdict` resolved that by taking the maximum, which
+  is backwards: the warning is the more specific claim and the one the model
+  actually argued for. `resolveHedges` now drops the critical when its sibling
+  appears on the same file and evidence, and the instructions say plainly that
+  the pairs are alternatives — reporting both is not caution, it is declining to
+  answer.
+- **The checklist had no way to report a critical-shaped observation that turns
+  out to be benign.** A model pass over 20 real AUR packages returned 13
+  MALICIOUS, none of them malicious. `arc-client`'s own note reads *"this is a
+  normal part of building this project, not an attack"* while triggering a
+  critical check, because the only id covering `npm install` was
+  `unrelated_pkg_manager_exec` — and `deriveVerdict` cannot read an exculpatory
+  note. With the siblings above, the same 20 return 1.
+- **Behavioural rules no longer match package metadata.** `NPM-002` reported
+  `aur-malware-check-git` as malicious because its `pkgdesc` names the campaign
+  it exists to detect. `pkgdesc`, `url`, `license`, `groups`, `keywords`, `arch`
+  and the version fields are excluded on both the raw-text and command-view
+  paths. `AI-*`, `UNI-*`, `URL-*`, `SRC-*`, `NET-*`, `CHK-*` and `REF-*` are
+  exempt — for the first two the prose IS the attack surface, and for the rest
+  the metadata IS the subject. `pkgname` stays in scope: a package *named*
+  `xmrig-bin` is a miner.
+
+### Notes on method
+- A model pass over 472 sampled packages surfaced 21 worth reading by hand. Of
+  those, 19 had already been removed from the AUR — the mirror was showing
+  history, and 37% of all static-sweep hits were on packages that no longer
+  exist. Sweep results are now intersected with the live package list before
+  anything is reported. That the AUR's own removal process had already caught
+  almost all of them is worth stating as plainly as any finding.
+
 ## [0.8.4] - 2026-08-25
 
 ### Changed
@@ -705,7 +807,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/manticore-projects/aurscan/compare/v0.8.1...v0.8.2

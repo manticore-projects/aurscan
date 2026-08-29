@@ -16,9 +16,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/manticore-projects/aurscan/internal/aur"
 	"github.com/manticore-projects/aurscan/internal/config"
@@ -36,6 +38,7 @@ const usage = `usage:
   aurscan --scan-file              scan packages listed in ./aurscan.paclist
   aurscan --rules-only <...>       static rules only, no LLM call (free, offline)
   aurscan --score <file|dir|->     print 0-100 trust score; exit=score, 255=fail
+  aurscan --json <file|dir|->      print the full result as JSON on stdout
   aurscan --edit-hook <files...>   gate mode (yay/paru invoke this as their editor)
   aurscan --prebuild <dir>         gate mode (paru PreBuildCommand / yay v13 hook)
   aurscan --install-paru-hook      enable scanning in paru.conf (no wrapper)
@@ -163,6 +166,10 @@ func main() {
 
 	if len(args) > 0 && args[0] == "--score" {
 		os.Exit(scoreMode(args[1:]))
+	}
+
+	if len(args) > 0 && args[0] == "--json" {
+		os.Exit(jsonMode(args[1:]))
 	}
 
 	if len(args) > 0 && args[0] == "--rules-only" {
@@ -334,6 +341,87 @@ func collectOne(target string) (string, scan.Files, error) {
 // scripting (issue #18): the 0-100 trust score on success, or 255 ("-1") if the
 // scan could not be completed. The trust score is also printed to stdout; the
 // human-readable verdict goes to stderr so `score=$(aurscan --score -)` is clean.
+// jsonMode prints the complete result — verdict, confidence, summary, findings
+// and the checklist the verdict was derived from — as one JSON object.
+//
+// The verdict LABEL and the CHECK IDS answer different questions, and a sweep
+// needs the second. At an install prompt, fail-safe is right: a package that
+// pipes an unpinned script into a shell should say MALICIOUS and let the user
+// decide. But reporting that package to a mailing list as malware would be an
+// accusation resting on a label that is genuinely ambiguous on borderline cases
+// — whether a download host "belongs to" a project is a judgement, and the
+// model lands either side of it on the same package.
+//
+// The check ids are not ambiguous in the same way. install_scriptlet_worm,
+// credential_access and exfiltration have no benign form; unpinned_upstream_-
+// installer and privilege_persistence do. Filtering a sweep on ids lets a
+// report say what a package DOES rather than what a scanner called it.
+func jsonMode(rest []string) int {
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"--json takes exactly one target (a PKGBUILD file, a dir, or - for stdin)")
+		return 255
+	}
+	name, files, err := collectOne(rest[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+		return 255
+	}
+	res := pipeline.Run(name, files, "")
+
+	out := struct {
+		Package    string         `json:"package"`
+		Verdict    string         `json:"verdict"`
+		Confidence float64        `json:"confidence"`
+		Score      int            `json:"score"`
+		Summary    string         `json:"summary"`
+		Failed     bool           `json:"failed"`
+		Cached     bool           `json:"cached"`
+		Model      string         `json:"model,omitempty"`
+		CheckIDs   []string       `json:"check_ids"`
+		Checks     []scan.Check   `json:"checks,omitempty"`
+		Findings   []scan.Finding `json:"findings,omitempty"`
+	}{
+		Package:    name,
+		Verdict:    res.V.Verdict,
+		Confidence: res.V.Confidence,
+		Score:      scan.TrustScore(res.V),
+		Summary:    res.V.Summary,
+		Failed:     res.Failed,
+		Cached:     res.Cached,
+		Model:      res.Model,
+		CheckIDs:   checkIDs(res.V.Checks),
+		Checks:     res.V.Checks,
+		Findings:   res.V.Findings,
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintln(os.Stderr, ui.Red("error: ")+err.Error())
+		return 255
+	}
+	if res.Failed {
+		return 255
+	}
+	return 0
+}
+
+// checkIDs lists the distinct triggered check ids, sorted — the field a sweep
+// filters on.
+func checkIDs(checks []scan.Check) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, c := range checks {
+		if c.ID == "" || seen[c.ID] {
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c.ID)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func scoreMode(rest []string) int {
 	if len(rest) != 1 {
 		fmt.Fprintln(os.Stderr, ui.Red("error: ")+"--score takes exactly one target (a PKGBUILD file, a dir, or - for stdin)")

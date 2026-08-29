@@ -6,10 +6,13 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/manticore-projects/aurscan/internal/fetch"
 
 	"github.com/manticore-projects/aurscan/internal/rules"
 	"github.com/manticore-projects/aurscan/internal/scan"
@@ -17,6 +20,12 @@ import (
 
 // Run scans one package. rep is optional pre-formatted reputation text.
 func Run(pkg string, files scan.Files, rep string) scan.Result {
+	// Opt-in: retrieve the scripts this package pipes into a shell, so the
+	// reviewer sees what the URL serves rather than having to curl it by hand.
+	// Purely additive — see fetchRemoteScripts.
+	if FetchRemote() {
+		fetchRemoteScripts(files)
+	}
 	hits := rules.Scan(files)
 
 	// Forced rules-only mode (AURSCAN_RULES_ONLY=1): skip the model entirely.
@@ -41,6 +50,67 @@ func Run(pkg string, files scan.Files, rep string) scan.Result {
 // few critical codes (PRIV-001 in particular) do occur in legitimate PKGBUILDs,
 // and dismissing those is exactly what the model is for.
 func StrictFloor() bool { return os.Getenv("AURSCAN_STRICT_FLOOR") == "1" }
+
+// FetchRemote reports whether the user opted into retrieving the scripts a
+// package pipes into a shell (AURSCAN_FETCH_REMOTE=1). Off by default: it
+// contacts hosts chosen by the package, which is a network surface and a
+// cloaking opportunity, and it must never be something that happens silently.
+func FetchRemote() bool { return os.Getenv("AURSCAN_FETCH_REMOTE") == "1" }
+
+// remotePrefix marks a pseudo-file holding retrieved content. It is not part of
+// the package and must never be mistaken for one.
+const remotePrefix = "remote-fetch/"
+
+// fetchRemoteScripts retrieves the scripts a package downloads and pipes into a
+// shell, and adds them to the file set as clearly labelled pseudo-files.
+//
+// The asymmetry that makes this safe: retrieved content can only ever ADD
+// findings. The DLE-001/DLE-002 hit that identified the URL in the first place
+// is about the absence of pinning, not about the bytes — it stays whatever the
+// bytes turn out to be, it is in fatalCodes, and no fetch can clear it. So a
+// script that proves benign leaves the verdict exactly where it was and merely
+// tells the reviewer what they would otherwise have had to curl by hand; a
+// script that proves hostile escalates.
+//
+// Anything else would be a way to launder a finding: fetch once, look clean,
+// pass — on precisely the content whose defining property is that it can change
+// after you look.
+func fetchRemoteScripts(files scan.Files) {
+	urls := rules.RemoteExecURLs(files)
+	if len(urls) == 0 {
+		return
+	}
+	for _, u := range urls {
+		res := fetch.Script(context.Background(), u)
+		name := remotePrefix + sanitizeURL(u)
+		if res.Err != nil {
+			files[name] = fmt.Sprintf(
+				"# aurscan could not retrieve this URL: %v\n"+
+					"# The package pipes it into a shell at build time regardless.\n", res.Err)
+			continue
+		}
+		files[name] = fmt.Sprintf(
+			"# Retrieved by aurscan from %s\n"+
+				"# %d bytes, sha256 %s\n"+
+				"# THIS IS WHAT THE URL SERVED AT SCAN TIME. The package does not pin it,\n"+
+				"# so this is evidence about the present, not about what will run.\n%s",
+			u, res.Bytes, res.SHA256, res.Content)
+	}
+}
+
+// sanitizeURL turns a URL into something usable as a file name without losing
+// which URL it was.
+func sanitizeURL(u string) string {
+	r := strings.NewReplacer("://", "-", "/", "_", "?", "_", "&", "_", ":", "-")
+	n := r.Replace(u)
+	if len(n) > 120 {
+		n = n[:120]
+	}
+	if !strings.HasSuffix(n, ".sh") {
+		n += ".sh"
+	}
+	return n
+}
 
 // applyFloor folds the deterministic static-rule findings into the model's
 // result as first-class checks.
@@ -74,7 +144,13 @@ func applyFloor(res scan.Result, hits []rules.Hit) scan.Result {
 // verdict impact — which would silently defeat the floor, so an unknown id is
 // mapped to the sanctioned catch-all instead.
 func staticChecks(hits []rules.Hit, strict bool) []scan.Check {
-	fcs := rules.FloorChecks(hits, strict)
+	return toScanChecks(rules.FloorChecks(hits, strict))
+}
+
+// toScanChecks converts rule-side checks to auditor checks, mapping any id the
+// catalog does not know onto the sanctioned catch-all: deriveVerdict records an
+// unknown id as "info", which would silently drop the finding.
+func toScanChecks(fcs []rules.FloorCheck) []scan.Check {
 	if len(fcs) == 0 {
 		return nil
 	}
@@ -163,6 +239,12 @@ func rulesOnlyVerdict(pkg string, hits []rules.Hit, note string) scan.Result {
 		v.Confidence = 40
 		v.Summary = "No static-rule matches (" + note + "). Note: without an LLM this is a weak signal."
 	}
+	// Record the static hits as checks even though the verdict above is derived
+	// separately. Without a model there is no checklist, and --json would then
+	// report an empty check_ids for an offline sweep — which is precisely the
+	// field a sweep filters on, because a check id says what a package DOES
+	// while a verdict label says what a scanner called it.
+	v.Checks = toScanChecks(rules.AllChecks(hits))
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Code < hits[j].Code })
 	for _, h := range hits {
 		v.Findings = append(v.Findings, scan.Finding{
