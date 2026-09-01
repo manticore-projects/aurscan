@@ -180,7 +180,10 @@ jobs:
           echo "$SIGN_KEY" > site/SIGNING_KEY_FINGERPRINT
 
       - name: commit the synced PKGBUILDs
-        if: github.event_name == 'release'
+        # Tagged CI dispatches this workflow with an explicit version. Commit
+        # that reviewable version/checksum update just like a published-release
+        # run; a versionless manual rebuild intentionally remains commit-free.
+        if: github.event_name == 'release' || inputs.version != ''
         run: |
           if ! git diff --quiet -- packaging; then
             git config user.name  'github-actions[bot]'

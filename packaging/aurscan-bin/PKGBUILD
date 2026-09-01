@@ -3,7 +3,7 @@
 
 pkgname=aurscan-bin
 _pkgname=aurscan
-pkgver=0.7.1
+pkgver=0.8.4
 pkgrel=1
 pkgdesc='LLM-powered pre-build malware scanner for AUR packages (with paru / yay hooks)'
 arch=('x86_64' 'aarch64')
@@ -33,16 +33,16 @@ source=("${_pkgname}-${pkgver}-SHA256SUMS::${_relurl}/SHA256SUMS"
         "${_pkgname}-${pkgver}-SHA256SUMS.asc::${_relurl}/SHA256SUMS.asc"
         "${_pkgname}-${pkgver}-LICENSE::${_rawurl}/LICENSE"
         "${_pkgname}-${pkgver}-README.md::${_rawurl}/README.md")
-sha256sums=('4b73f130575eafa5264f6d687017e69233bd91686614580eb8c4eb8b8a4e15b0' # SHA256SUMS
+sha256sums=('51273dbe82b5a2ff339e98c9d36b5fd95cbc7d76d05a986a512431bd6ac7f8e7' # SHA256SUMS
             'SKIP'                                                             # signature, checked via validpgpkeys
             '243002447e0a20ae5ce6e671dba969881c67f110cccae5c4c9f553087709a7a5' # LICENSE
-            '21ed74e32d1a8135ace50f1a1d5bd42221c49e351b39b463ae6bc591a547eb0f') # README.md
+            'd8165284ae6fbe83e8ed1dcfa554527329dfcc326d4d68c064602e591b882229') # README.md
 
 source_x86_64=("${_pkgname}-${pkgver}-x86_64::${_relurl}/aurscan-linux-amd64")
-sha256sums_x86_64=('228f7a870fa2979d810d616cbd841bfef9aabb5ab8e9efff066b10c68a342f71')
+sha256sums_x86_64=('11bf6bd96752dcc7bc2970b07a234c79abd4abf17768eb48b6ef203ba805779f')
 
 source_aarch64=("${_pkgname}-${pkgver}-aarch64::${_relurl}/aurscan-linux-arm64")
-sha256sums_aarch64=('be8d1c341f4ae793f45603053a488f02ed3ac96422b86fdf69a9cff824962ff6')
+sha256sums_aarch64=('3fca55d76b0a41a89a57497dfbaea0a633f57df7f22b343406ac2fbc51cdbe25')
 
 _asset_name() {
   case "$CARCH" in

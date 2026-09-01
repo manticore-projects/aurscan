@@ -138,6 +138,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write # dispatch pacman-repo after release assets are signed
     steps:
       - name: download built binaries
         uses: actions/download-artifact@v4
@@ -210,3 +211,12 @@ jobs:
           files: |
             dist/SHA256SUMS
             dist/SHA256SUMS.asc
+
+      # Releases created above use GITHUB_TOKEN, so their `release: published`
+      # event cannot start another workflow. workflow_dispatch is an explicit
+      # exception to that recursion guard; use it to publish the pacman package
+      # and commit the synced PKGBUILDs after every successful tagged release.
+      - name: publish pacman repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pacman-repo.yml --ref main -f version="${GITHUB_REF_NAME#v}"
