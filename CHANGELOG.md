@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-01
+
 ### Fixed
 - **A lockfile-pinned dependency fetch no longer blocks the build.**
   `pkg_manager_build_deps` fired on any npm/cargo/pip invocation that built the
@@ -908,7 +910,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/manticore-projects/aurscan/compare/v0.8.2...v0.8.3
@@ -917,6 +920,20 @@ confusion as a property of the package.
 [0.8.0]: https://github.com/manticore-projects/aurscan/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/manticore-projects/aurscan/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/manticore-projects/aurscan/compare/v0.6.4...v0.7.0
+[0.6.4]: https://github.com/manticore-projects/aurscan/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/manticore-projects/aurscan/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/manticore-projects/aurscan/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/manticore-projects/aurscan/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/manticore-projects/aurscan/compare/v0.5.2...v0.6.0
+[0.5.2]: https://github.com/manticore-projects/aurscan/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/manticore-projects/aurscan/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/manticore-projects/aurscan/compare/v0.4.2...v0.5.0
+[0.4.2]: https://github.com/manticore-projects/aurscan/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/manticore-projects/aurscan/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/manticore-projects/aurscan/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/manticore-projects/aurscan/compare/v0.2.4...v0.3.0
+[0.2.4]: https://github.com/manticore-projects/aurscan/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/manticore-projects/aurscan/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/manticore-projects/aurscan/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/manticore-projects/aurscan/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/manticore-projects/aurscan/compare/v0.1.0...v0.2.0
