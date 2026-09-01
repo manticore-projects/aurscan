@@ -20,6 +20,7 @@ package scan
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -81,7 +82,7 @@ var checkCatalog = map[string]checkDef{
 	"unverifiable_provenance":       {"warning", "A source/download whose provenance the host cannot establish (generic object store, or a host unrelated to the stated upstream that is not a known forge)"},
 	"unexplained_step":              {"warning", "A patch/fix/optimization/lockfile step with no plausible technical reason for this package, or a pkgname/pkgdesc mismatch with what the scripts do"},
 	"reputation_risk":               {"warning", "A recently adopted/orphaned/newly-active package that gains build- or install-time network or package-manager behaviour, or a maintainer-field mismatch"},
-	"incomplete_scan":               {"warning", "The package references a file that was not supplied to the scanner (an install= scriptlet, a local source, a .hook or a .patch), so its behaviour could not be reviewed"},
+	"incomplete_scan":               {"warning", "The package references a REVIEWABLE script that was not supplied to the scanner (an install= scriptlet, a .hook, a .patch or a sourced helper), so its behaviour could not be reviewed. NOT this: a remote source=() download, whose contents no AUR repository ever contains"},
 	// Siblings for the legitimate forms of the critical checks above. Without
 	// these the model could only report a critical-shaped observation as
 	// critical, however benign it judged it to be — and deriveVerdict has no
@@ -104,7 +105,21 @@ var checkCatalog = map[string]checkDef{
 	// 20 sampled packages to SUSPICIOUS and drowned the findings that mattered.
 	// Info tier: shown, never blocking.
 	"build_cache_unconfined": {"info", "Build writes its dependency cache outside $srcdir (~/.cargo, ~/go) — packaging hygiene, not a security risk"},
-	"note":                   {"info", "Auditor note (not itself a risk)"},
+	// The sibling of incomplete_scan for content that is DOWNLOADED rather than
+	// committed. An AUR repository holds build scripts, not release tarballs, so
+	// "the sdist was not supplied" is true of every package whose source=() names
+	// an archive — the entire python-* namespace, most Go and Rust packages, and
+	// anything pulling a GitHub release. Reported at warning tier it fired on the
+	// majority of a package class and blocked the build, which trains the user to
+	// type INSTALL without reading. That is a worse outcome than not reporting it.
+	//
+	// It is NOT nothing: a sdist's setup.py runs as the building user, and the
+	// checksum only proves the archive matches what the packager pinned, not that
+	// what they pinned is benign. So it stays visible at info tier and says so.
+	// Actually reviewing the archive contents is a collector change (extract the
+	// build-hook members and hand them to the scanner), not a severity change.
+	"remote_source_unreviewed": {"info", "A remote source=() archive's contents were not inspected — checksum-pinned but unreviewed, so build hooks inside it (setup.py, build.rs, configure) were not seen"},
+	"note":                     {"info", "Auditor note (not itself a risk)"},
 }
 
 // severityRank orders severities for "worst wins" reduction.
@@ -159,8 +174,42 @@ func resolveHedges(checks []Check) []Check {
 	return out
 }
 
+// archiveArtifact matches names whose contents an AUR repository never holds: a
+// release archive fetched by source=(), or a package makepkg itself produced.
+// Deliberately NOT listed: .install, .hook, .patch, .diff, .sh — those are the
+// reviewable scripts incomplete_scan exists for, and they must keep blocking.
+var archiveArtifact = regexp.MustCompile(`(?i)\.(?:pkg\.tar\.[a-z0-9]+|tar\.(?:gz|xz|bz2|zst|lz)|tgz|txz|zip|whl|crate|gem|jar|7z|rar|appimage|deb|rpm)(?:$|[^a-z0-9])`)
+
+// confineIncompleteScan remaps an incomplete_scan finding to the info-tier
+// remote_source_unreviewed when the thing not supplied is a downloaded archive
+// or a built package rather than a script.
+//
+// The prompt tells the model incomplete_scan is for scripts and says "trigger
+// this whenever it happens". Those two instructions conflict for a sdist, and
+// the model resolved the conflict toward triggering: python-pyhanko-certvalidator
+// was blocked because pyhanko_certvalidator-0.32.0.tar.gz "was not supplied for
+// review", and a stale python-pyhanko-0.36.2-1-any.pkg.tar.zst blocked its
+// sibling the same way. Neither is a finding about the package.
+//
+// Instructions are advice; this is the guarantee, for the same reason
+// resolveHedges and the verdict floor live in Go. Reference resolution for files
+// that genuinely SHOULD be in the repository is already owned by REF-001/REF-004
+// in internal/rules, which resolve source=() with variable substitution instead
+// of by eye — so nothing is lost by narrowing the model's version of the check.
+func confineIncompleteScan(checks []Check) []Check {
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if c.ID == "incomplete_scan" && c.Triggered &&
+			(archiveArtifact.MatchString(c.File) || archiveArtifact.MatchString(c.Evidence)) {
+			c.ID = "remote_source_unreviewed"
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func deriveVerdict(checks []Check) (verdict string, findings []Finding, confidence float64, summary string) {
-	checks = resolveHedges(checks)
+	checks = confineIncompleteScan(resolveHedges(checks))
 	var nCrit, nWarn, nInfo int
 	for _, c := range checks {
 		if !c.Triggered {

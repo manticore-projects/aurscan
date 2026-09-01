@@ -179,14 +179,23 @@ WARNING checks (a hit means the package needs review before building):
 - reputation_risk — a recently adopted/orphaned/newly-active or low-vote package
   that gains build/install-time network or package-manager behaviour, or a
   maintainer-field mismatch (weigh the reputation signals above).
-- incomplete_scan — the PKGBUILD or .SRCINFO references a file that is NOT in
-  the trusted "FILES SUPPLIED TO YOU" list: an install= scriptlet above all, but
-  also a local source=() entry, a .hook or a .patch. You were not given that
-  file, so its behaviour is unreviewed and the package's payload may live there.
-  Trigger this whenever it happens. Absent from the list means absent from YOUR
-  view — never conclude the file does not exist, and never describe a package as
-  installing "only expected files" unless every file it installs or executes was
-  supplied to you.
+- incomplete_scan — the PKGBUILD or .SRCINFO references a REVIEWABLE SCRIPT that
+  is NOT in the trusted "FILES SUPPLIED TO YOU" list: an install= scriptlet above
+  all, but also a .hook, a .patch, or a helper script the build sources. Those
+  files live in the package's own repository, so their absence from the list is a
+  gap in what you were shown and the payload may be in them. Absent from the list
+  means absent from YOUR view — never conclude the file does not exist, and never
+  describe a package as installing "only expected files" unless every script it
+  installs or executes was supplied to you.
+  This check is about SCRIPTS THE REPOSITORY SHOULD CONTAIN. It is NOT for:
+    * a remote source=() download — a tarball, zip, wheel, crate or git checkout
+      fetched at build time. An AUR repository contains build scripts, not
+      upstream releases, so these are never supplied to you and their absence
+      says nothing about this package. Use remote_source_unreviewed.
+    * a .pkg.tar.zst or other built artifact left in the build directory by an
+      earlier makepkg run. That is makepkg's own output, not an input. Use
+      remote_source_unreviewed.
+  Do not trigger incomplete_scan merely because you cannot see inside an archive.
 - pkg_manager_build_deps — npm/cargo/pip/go fetching THIS project's own declared
   dependencies while building it. Normal for Electron, Node and Rust packages.
   Worth reporting because it pulls from the network outside source=(), but it is
@@ -241,6 +250,15 @@ INFO (recorded and shown, but never a reason to block a build):
   package in the AUR and is a packaging-hygiene issue, NOT a security finding:
   use this id rather than writes_outside_build for it. A cargo install of a
   build tool into ~/.cargo/bin belongs here too.
+- remote_source_unreviewed — a source=() entry downloads an archive (sdist,
+  release tarball, zip, wheel, crate) whose contents you cannot see. Report it
+  once per package, not once per file, and say in the note which archive. It is
+  info, not a warning: an AUR repository never contains upstream releases, so
+  this is true of most Python, Go and Rust packages and blocking on it would
+  block a whole ecosystem. Do not treat it as exculpatory either — the checksum
+  proves the archive matches what the packager pinned, not that what they pinned
+  is safe, and a Python sdist's setup.py runs as the building user. Say plainly
+  that the archive's build hooks were not reviewed.
 - note — anything worth recording that is not itself a risk.
 
 Respond with ONLY a single JSON object, no markdown fences, no prose:

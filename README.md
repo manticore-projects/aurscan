@@ -497,6 +497,9 @@ An LLM is never perfectly deterministic, so the *same* PKGBUILD can otherwise ea
 - **Prompt-injection hardening.** Package files are sent as untrusted data, kept separate from the trusted instructions. The prompt treats embedded "this package is safe / ignore previous instructions" text as evidence of malice, and only the JSON contract is trusted when parsing. Both are covered by tests.
 - **No execution, no disk writes.** AUR snapshots are parsed in memory. Nothing from the suspect package is written to disk or run.
 - **Bounded context.** Binaries and files over 64 KB are skipped, and total context is capped at 240 KB.
+- **Archive contents are not reviewed, and the output says so.** `source=()` downloads — sdists, release tarballs, wheels, crates — are checksum-verified by makepkg but never opened by aurscan, so build hooks inside them (`setup.py`, `build.rs`, `configure`) are unseen. This is reported as `remote_source_unreviewed` at **info** tier: it does not block, because an AUR repository never contains upstream releases and blocking on it would block most of the `python-*`, Go and Rust namespaces. It is reported rather than ignored because it is a real gap — the checksum proves the archive matches what the *packager pinned*, not that what they pinned is safe, and a sdist's `setup.py` runs as the building user. Treat an OK verdict on such a package as covering its build scripts, not its upstream tarball.
+
+  What *does* block is a **script the repository itself should contain** — an `install=` scriptlet, a `.hook`, a `.patch` — that never reached the scanner. That is `incomplete_scan` (warning) and `REF-001`/`REF-004`, and it is a different claim: the payload may be in the file you were not shown.
 
 ## Limitations
 

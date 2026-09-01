@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`incomplete_scan` no longer fires on a remote `source=()` download.** It was
+  blocking `python-pyhanko-certvalidator` because
+  `pyhanko_certvalidator-0.32.0.tar.gz` "was not supplied for review", and
+  blocking its sibling over a stale `python-pyhanko-0.36.2-1-any.pkg.tar.zst`
+  left in the build directory by an earlier `makepkg` run.
+
+  Neither is a finding about the package. An AUR repository contains build
+  scripts, not upstream releases, so a sdist is *never* supplied to the scanner —
+  the check was therefore true of essentially every `python-*` package, plus most
+  Go and Rust ones, and it blocked the build. A warning that fires on the
+  majority of a package class does not make anyone safer; it teaches the user to
+  type INSTALL without reading, which costs more than the check ever bought.
+
+  The cause was two instructions in the prompt that contradict each other. The
+  check is described as being for scripts (`install=`, `.hook`, `.patch`), and
+  then told to "trigger this whenever it happens" — and the model resolved the
+  conflict toward triggering. Both halves are fixed: the prompt now carries an
+  explicit NOT-this list, and `confineIncompleteScan` in `deriveVerdict`
+  re-maps the check deterministically when the unsupplied thing is an archive or
+  a built artifact rather than a script. Prompt text is advice; the Go guard is
+  the guarantee, for the same reason `resolveHedges` and the verdict floor live
+  in code.
+
+  Reference resolution for files that genuinely *should* be in the repository is
+  unaffected: `REF-001`/`REF-004` already resolve `install=` and local
+  `source=()` entries with variable substitution, which is strictly better than
+  the model doing it by eye. `install=`, `.hook` and `.patch` still block, and
+  are pinned by tests.
+
 ### Added
+- **`remote_source_unreviewed`** (info) — the id for what the misfire was
+  actually observing: a `source=()` archive whose contents were not inspected.
+
+  Info, not warning, so it never blocks — but it is reported, and the OK
+  confidence drops from 95% to 80% when it fires, because the observation is not
+  nothing. A checksum proves the archive matches what the packager pinned, not
+  that what they pinned is benign, and a Python sdist's `setup.py` runs as the
+  building user. aurscan does not yet read inside these archives; saying so in
+  the output is the honest position until it does.
 - **The system prompt is now sent as a cacheable block.** It is ~4,200 tokens
   and byte-identical on every call, against ~1,900 tokens of package files that
   differ each time — so roughly 70% of the input bills as a cache read at a
