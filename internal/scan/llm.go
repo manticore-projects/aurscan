@@ -453,11 +453,32 @@ func callAPI(ctx context.Context, be Backend, instructions, content string) (str
 	if be.MaxTokens > 0 {
 		maxTok = be.MaxTokens
 	}
+	// The system prompt is ~4,200 tokens and byte-identical on every call, while
+	// the user message is a different package each time. Sending the system
+	// prompt as a cacheable block turns roughly 70% of the input into cache
+	// reads at a tenth of the price.
+	//
+	// This uses an EXPLICIT breakpoint on the system block rather than
+	// request-level automatic caching, and the distinction matters: automatic
+	// caching places the breakpoint on the last cacheable block, which here is
+	// the package files. Those differ every request, so the prefix hash would
+	// never match — a fresh cache write every time and not one read. It is the
+	// documented trap, and this prompt has exactly the shape that falls into it.
+	//
+	// Not free in every case: a cache write costs 25% more than plain input, so
+	// a single isolated scan with nothing following it within the 5-minute TTL
+	// is marginally more expensive. Break-even is about one hit per four writes,
+	// and both real usage patterns — a sweep, or a yay session covering several
+	// packages — clear that comfortably.
+	sysBlock := map[string]any{"type": "text", "text": instructions}
+	if promptCacheEnabled() {
+		sysBlock["cache_control"] = promptCacheControl()
+	}
 	body, _ := json.Marshal(map[string]any{
 		"model":       model,
 		"max_tokens":  maxTok,
 		"temperature": resolveTemperature(be), // 0 by default — reproducible auditing (#56)
-		"system":      instructions,
+		"system":      []map[string]any{sysBlock},
 		"messages":    []map[string]string{{"role": "user", "content": content}},
 	})
 	dbgBlock("anthropic API request body", string(body))
@@ -482,8 +503,10 @@ func callAPI(ctx context.Context, be Backend, instructions, content string) (str
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage struct {
-			In  int `json:"input_tokens"`
-			Out int `json:"output_tokens"`
+			In        int `json:"input_tokens"`
+			Out       int `json:"output_tokens"`
+			CacheRead int `json:"cache_read_input_tokens"`
+			CacheWrit int `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -493,9 +516,34 @@ func callAPI(ctx context.Context, be Backend, instructions, content string) (str
 	for _, b := range out.Content {
 		sb.WriteString(b.Text)
 	}
-	u := priceUsage(Usage{In: out.Usage.In, Out: out.Usage.Out}, model)
+	// input_tokens counts only what follows the last cache breakpoint, so the
+	// cached prefix has to be added back to get the real total.
+	u := priceUsage(Usage{
+		In:         out.Usage.In,
+		Out:        out.Usage.Out,
+		CacheRead:  out.Usage.CacheRead,
+		CacheWrite: out.Usage.CacheWrit,
+	}, model)
 	return sb.String(), u, nil
 }
+
+// promptCacheControl builds the cache_control block for the system prompt. The
+// 5-minute default is refreshed free on every hit, which suits a sweep or an
+// interactive session where scans follow one another closely.
+// AURSCAN_PROMPT_CACHE_TTL=1h buys an hour at twice the write price, worth it
+// only when scans are minutes apart. AURSCAN_PROMPT_CACHE=0 disables caching
+// for anyone whose usage is genuinely one isolated scan at a time, where a
+// write that is never read costs 25% more than plain input.
+func promptCacheControl() map[string]string {
+	cc := map[string]string{"type": "ephemeral"}
+	if os.Getenv("AURSCAN_PROMPT_CACHE_TTL") == "1h" {
+		cc["ttl"] = "1h"
+	}
+	return cc
+}
+
+// promptCacheEnabled reports whether to send a cache breakpoint at all.
+func promptCacheEnabled() bool { return os.Getenv("AURSCAN_PROMPT_CACHE") != "0" }
 
 // resolveTemperature picks the sampling temperature for auditing, lowest wins:
 // an explicit per-backend value (llmN.conf temperature=), then the backend-

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The system prompt is now sent as a cacheable block.** It is ~4,200 tokens
+  and byte-identical on every call, against ~1,900 tokens of package files that
+  differ each time — so roughly 70% of the input bills as a cache read at a
+  tenth of the base price.
+
+  The breakpoint is placed **explicitly on the system block** rather than using
+  request-level automatic caching, and the distinction is the whole thing:
+  automatic caching puts the breakpoint on the last cacheable block, which here
+  is the package files. Those differ every request, so the prefix hash would
+  never match — a fresh cache write on every call and not one read.
+
+  Not free in every case. A cache write costs 25% more than plain input, so a
+  single isolated scan with nothing following it inside the 5-minute TTL is
+  marginally more expensive; break-even is about one hit per four writes.
+  `AURSCAN_PROMPT_CACHE=0` disables it; `AURSCAN_PROMPT_CACHE_TTL=1h` buys the
+  hour cache for scans that are minutes apart.
+
+  Usage accounting was corrected at the same time: the API reports
+  `input_tokens` as only what FOLLOWS the last breakpoint, so reporting it alone
+  would have understated a cached scan by about 70%.
+
 ## [0.8.5] - 2026-08-25
 
 ### Added

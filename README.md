@@ -422,6 +422,8 @@ aurscan --debug --score ./PKGBUILD
 | `AURSCAN_TEMPERATURE` | `0` | backend-agnostic sampling temperature (applies to the `api` backend too); `0` = reproducible auditing |
 | `AURSCAN_TIMEOUT` | `180` | per-request budget in **seconds**; raise it for slow CPU-only models |
 | `AURSCAN_INSTRUCTIONS` | — | path to extra auditor instructions (appended) |
+| `AURSCAN_PROMPT_CACHE` | — | `0` = do not send a prompt-cache breakpoint. On by default: the ~4,200-token system prompt is identical on every call, so caching it turns ~70% of the input into cache reads at a tenth of the price |
+| `AURSCAN_PROMPT_CACHE_TTL` | `5m` | `1h` = keep the cached prompt for an hour at twice the write price. Worth it only when scans are minutes apart |
 | `AURSCAN_RULES_ONLY` | — | `1` = static rules only, never call a model |
 | `AURSCAN_STRICT_FLOOR` | — | `1` = any critical static hit prevents an `OK` verdict, not only the non-overridable ones |
 | `AURSCAN_FETCH_REMOTE` | — | `1` = retrieve the scripts the package pipes into a shell and include them as labelled evidence. **Off by default**: it contacts hosts the package chooses. Retrieved content can only raise a verdict, never clear one |

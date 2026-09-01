@@ -8,16 +8,24 @@ import (
 
 // Usage captures token counts and cost for one or more model calls.
 type Usage struct {
-	In, Out   int     // token counts
-	CostUSD   float64 // total cost in USD, if known
-	HaveCost  bool    // whether CostUSD is meaningful
-	Estimated bool    // token counts are estimated (custom backend / fallback)
+	In, Out int // token counts
+	// CacheRead/CacheWrite are the prompt-cache halves of the input. The API
+	// reports input_tokens as only what FOLLOWS the last cache breakpoint, so
+	// the true total is In + CacheRead + CacheWrite — reporting In alone would
+	// understate a cached scan by about 70%.
+	CacheRead  int
+	CacheWrite int
+	CostUSD    float64 // total cost in USD, if known
+	HaveCost   bool    // whether CostUSD is meaningful
+	Estimated  bool    // token counts are estimated (custom backend / fallback)
 }
 
 // Add merges another Usage into u (used to accumulate a session total).
 func (u *Usage) Add(o Usage) {
 	u.In += o.In
 	u.Out += o.Out
+	u.CacheRead += o.CacheRead
+	u.CacheWrite += o.CacheWrite
 	u.CostUSD += o.CostUSD
 	u.HaveCost = u.HaveCost || o.HaveCost
 	u.Estimated = u.Estimated || o.Estimated
@@ -38,6 +46,11 @@ func (u Usage) String() string {
 		// internally consistent (issue #52).
 		cost = fmt.Sprintf("%s$%.4f", approx, u.CostUSD)
 	}
+	if u.CacheRead > 0 || u.CacheWrite > 0 {
+		return fmt.Sprintf("tokens: %s%s in (%s cached) / %s%s out · %s",
+			approx, thousands(u.In+u.CacheRead+u.CacheWrite), thousands(u.CacheRead),
+			approx, thousands(u.Out), cost)
+	}
 	return fmt.Sprintf("tokens: %s%s in / %s%s out · %s",
 		approx, thousands(u.In), approx, thousands(u.Out), cost)
 }
@@ -57,7 +70,11 @@ func thousands(n int) string {
 // unchanged and keep rendering "cost n/a".
 func priceUsage(u Usage, model string) Usage {
 	if pin, pout, ok := ModelPrice(model); ok {
-		u.CostUSD = float64(u.In)/1e6*pin + float64(u.Out)/1e6*pout
+		// Cache reads bill at 10% of base input, 5-minute writes at 125%.
+		u.CostUSD = float64(u.In)/1e6*pin +
+			float64(u.CacheRead)/1e6*pin*0.10 +
+			float64(u.CacheWrite)/1e6*pin*1.25 +
+			float64(u.Out)/1e6*pout
 		u.HaveCost = true
 	}
 	return u
