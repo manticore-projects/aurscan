@@ -34,7 +34,7 @@ import (
 // upgraded aurscan ignores entries written by an incompatible older one.
 // v2: Tier-2 checklist verdict derivation (discussion #56). The prompt and the
 // verdict policy changed, so v1 entries must not be replayed under v2 rules.
-const cacheVersion = "v7" // v7: incomplete_scan confined to scripts; remote_source_unreviewed added
+const cacheVersion = "v8" // v8: pkg_manager_deps_pinned; incomplete_scan confined to scripts
 
 // defaultCacheTTL bounds how long a stored verdict is served. The key already
 // captures package/prompt/instructions/model, so a shorter-lived opinion is not

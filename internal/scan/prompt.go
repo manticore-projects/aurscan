@@ -197,9 +197,11 @@ WARNING checks (a hit means the package needs review before building):
       remote_source_unreviewed.
   Do not trigger incomplete_scan merely because you cannot see inside an archive.
 - pkg_manager_build_deps — npm/cargo/pip/go fetching THIS project's own declared
-  dependencies while building it. Normal for Electron, Node and Rust packages.
-  Worth reporting because it pulls from the network outside source=(), but it is
-  not the Atomic Arch signature.
+  dependencies while building it, WITHOUT pinning what it resolves. Normal for
+  Electron, Node and Rust packages, and not the Atomic Arch signature — but the
+  resolution happens at build time and is decided by whoever controls the
+  registry, so the bytes that compile are not the bytes anyone reviewed. If the
+  command pins to a lockfile, use pkg_manager_deps_pinned instead.
 - service_enabled_by_scriptlet — an install scriptlet enables or starts a systemd
   service the package itself ships. Against Arch guidelines, which leave that to
   the user; a policy violation, not an attack.
@@ -250,6 +252,16 @@ INFO (recorded and shown, but never a reason to block a build):
   package in the AUR and is a packaging-hygiene issue, NOT a security finding:
   use this id rather than writes_outside_build for it. A cargo install of a
   build tool into ~/.cargo/bin belongs here too.
+- pkg_manager_deps_pinned — the same fetch, but pinned: "npm ci", "cargo build
+  --locked" or "--frozen", "pnpm/yarn install --frozen-lockfile", "yarn
+  --immutable", "pip install --require-hashes", "-mod=vendor", or a plain
+  "go build" (Go
+  verifies every module against go.sum by construction, so it is pinned unless
+  GOFLAGS=-mod=mod / GOSUMDB=off / GOPRIVATE switches that off). The fetch still
+  leaves source=() and is still worth reporting, but what it will fetch was
+  decided before the build ran, so it does not block. Pinning says nothing about
+  WHOSE dependencies these are — if the fetched package is unrelated to this
+  software, that is still unrelated_pkg_manager_exec, lockfile or not.
 - remote_source_unreviewed — a source=() entry downloads an archive (sdist,
   release tarball, zip, wheel, crate) whose contents you cannot see. Report it
   once per package, not once per file, and say in the note which archive. It is

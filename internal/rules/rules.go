@@ -591,6 +591,8 @@ func Scan(files map[string]string) []Hit {
 			// BLD-001/BLD-002: go/cargo caches not confined to $srcdir
 			// (issue #55).
 			checkCacheConfinement(name, text, cmds, parsed, add)
+			// DEP-001: dependency fetch pinned to a lockfile (mitigation).
+			checkDepPinning(name, text, cmds, parsed, add)
 			// CHK-005: integrity, paired positionally (checksums.go).
 			checkChecksums(name, text, add)
 			for _, m := range gitSourceHost.FindAllStringSubmatchIndex(text, -1) {
@@ -902,6 +904,8 @@ var checkIDFor = map[string]string{
 	"REF-001": "incomplete_scan",
 	"REF-003": "incomplete_scan",
 	"REF-004": "incomplete_scan",
+	// a mitigation, not a risk: the only entry here that lowers a claim
+	"DEP-001": "pkg_manager_deps_pinned",
 }
 
 // AllChecks renders EVERY hit as a checklist entry, at the tier its severity

@@ -119,7 +119,20 @@ var checkCatalog = map[string]checkDef{
 	// Actually reviewing the archive contents is a collector change (extract the
 	// build-hook members and hand them to the scanner), not a severity change.
 	"remote_source_unreviewed": {"info", "A remote source=() archive's contents were not inspected — checksum-pinned but unreviewed, so build hooks inside it (setup.py, build.rs, configure) were not seen"},
-	"note":                     {"info", "Auditor note (not itself a risk)"},
+	// The third tier of the npm/cargo question. unrelated_pkg_manager_exec asks
+	// whether the fetch is for THIS project; pkg_manager_build_deps says it is,
+	// and warns because the fetch leaves source=(). This says it is, AND that
+	// what it fetches was decided before the build ran.
+	//
+	// That distinction is the one the Atomic Arch campaign turned on. An
+	// unpinned resolve is a decision made at build time by whoever controls the
+	// registry, so the bytes that compile are not the bytes anyone reviewed; a
+	// lockfile makes them the same bytes. Without an id for the pinned case the
+	// model could only report the warning, which fires on essentially every
+	// Electron, Node and Rust package in the AUR and blocks the build — the same
+	// ecosystem-wide false positive build_cache_unconfined was demoted for.
+	"pkg_manager_deps_pinned": {"info", "npm/cargo/pip/go fetching THIS project's own dependencies, pinned to a lockfile (npm ci, cargo --locked/--frozen, --frozen-lockfile, pip --require-hashes, go.sum) — resolved before the build, not during it"},
+	"note":                    {"info", "Auditor note (not itself a risk)"},
 }
 
 // severityRank orders severities for "worst wins" reduction.
@@ -208,8 +221,49 @@ func confineIncompleteScan(checks []Check) []Check {
 	return out
 }
 
+// confinePinnedDeps downgrades pkg_manager_build_deps to the info-tier
+// pkg_manager_deps_pinned when anything in the checklist established that the
+// build's dependency fetch is pinned to a lockfile.
+//
+// Unlike resolveHedges this is PACKAGE-scoped, not (file, evidence)-scoped, and
+// the asymmetry is deliberate: a sibling pair is two readings of one line, so
+// matching on the line is right. Pinning is not a property of a line. `cargo
+// build --locked` in build() governs a fetch written anywhere in the PKGBUILD,
+// because makepkg runs every function in one process — and the pinning signal
+// usually arrives from DEP-001 in the rules layer, whose snippet will never
+// match the model's evidence string for the fetch it is talking about.
+//
+// The downgrade only ever runs in this direction. A pinned fetch is still a
+// network fetch outside source=() and is still reported; it just does not block,
+// because "npm ran" is true of an entire ecosystem while "npm resolved semver
+// ranges at build time" is the part that let the Atomic Arch packages swap what
+// compiled. If the model ALSO reported unrelated_pkg_manager_exec, that is a
+// critical claim about a different question (whose dependencies these are) and
+// is untouched here — pinning a fetch to a lockfile says nothing about whether
+// the thing being fetched belongs to this project.
+func confinePinnedDeps(checks []Check) []Check {
+	pinned := false
+	for _, c := range checks {
+		if c.ID == "pkg_manager_deps_pinned" && c.Triggered {
+			pinned = true
+			break
+		}
+	}
+	if !pinned {
+		return checks
+	}
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if c.ID == "pkg_manager_build_deps" && c.Triggered {
+			c.ID = "pkg_manager_deps_pinned"
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func deriveVerdict(checks []Check) (verdict string, findings []Finding, confidence float64, summary string) {
-	checks = confineIncompleteScan(resolveHedges(checks))
+	checks = confinePinnedDeps(confineIncompleteScan(resolveHedges(checks)))
 	var nCrit, nWarn, nInfo int
 	for _, c := range checks {
 		if !c.Triggered {

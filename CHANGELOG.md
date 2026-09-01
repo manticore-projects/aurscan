@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A lockfile-pinned dependency fetch no longer blocks the build.**
+  `pkg_manager_build_deps` fired on any npm/cargo/pip invocation that built the
+  package's own dependencies — which is every Electron and Node package in the
+  AUR and most Rust ones — at warning tier, so it blocked. That is the same
+  ecosystem-wide false positive `build_cache_unconfined` was demoted for, still
+  live in a different namespace.
+
+  The check was asking the wrong question. "Did a package manager run" is true
+  of a whole ecosystem and separates nothing. The question that separates is
+  whether what it fetches was **decided before the build ran**: `npm ci`,
+  `cargo --locked`/`--frozen`, `--frozen-lockfile`, `--immutable`,
+  `pip --require-hashes`, `-mod=vendor`, or a plain `go build` (Go verifies every
+  module against `go.sum` by construction) resolve to bytes someone could have
+  reviewed. A bare `npm install` or `cargo build` resolves semver ranges at build
+  time, so the bytes that compile are chosen by whoever controls the registry —
+  the property the Atomic Arch campaign turned on.
+
+  Pinned fetches are now reported at info tier and do not block; unpinned ones
+  keep the warning. `pkg_manager_build_deps` itself stays at warning, so the
+  sibling invariant with `unrelated_pkg_manager_exec` is untouched, and pinning
+  never clears that critical: a lockfile says what will be fetched, not whose
+  dependencies they are.
+
 - **`incomplete_scan` no longer fires on a remote `source=()` download.** It was
   blocking `python-pyhanko-certvalidator` because
   `pyhanko_certvalidator-0.32.0.tar.gz` "was not supplied for review", and
@@ -38,6 +61,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are pinned by tests.
 
 ### Added
+- **`DEP-001`** — dependency fetch pinned to a lockfile. The only rule in the
+  catalog that reports a **mitigation** rather than a risk, and it exists so
+  `confinePinnedDeps` can downgrade a `pkg_manager_build_deps` warning the
+  evidence contradicts.
+
+  Only the pinned case is emitted statically. Emitting the *unpinned* case as a
+  rule would fire on the same whole ecosystem this change exists to stop
+  punishing, so "unpinned" stays the model's call. Detection is by FLAG, not by
+  lockfile presence: a lockfile normally lives inside the upstream tarball rather
+  than the AUR repository, so testing for `Cargo.lock` among the supplied files
+  would be false almost always. The flags are a sound proxy precisely because
+  they fail the build when the lockfile is missing or stale.
+- **`pkg_manager_deps_pinned`** (info) — the checklist id `DEP-001` maps to, and
+  the third tier of the npm/cargo question: `unrelated_pkg_manager_exec` asks
+  whose dependencies these are, `pkg_manager_build_deps` says they are this
+  project's and warns that the fetch leaves `source=()`, and this adds that the
+  resolution was pinned.
 - **`remote_source_unreviewed`** (info) — the id for what the misfire was
   actually observing: a `source=()` archive whose contents were not inspected.
 
