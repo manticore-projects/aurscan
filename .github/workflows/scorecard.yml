@@ -13,15 +13,20 @@ name: scorecard
 #   * only `push` to the default branch and `schedule` are supported triggers.
 #     pull_request and workflow_dispatch are experimental and fork runs are not
 #     supported at all, so this deliberately runs on neither.
+#   * there is no moving `v2` tag. The docs say "scorecard-action:v2" meaning
+#     the v2 line, but the repository only publishes v2.x.y tags, so `@v2`
+#     fails to resolve at all. Every action below is pinned to a commit SHA,
+#     which is both correct and what Scorecard's own Pinned-Dependencies check
+#     asks for.
 #
 # Expect the first score to be mediocre. Scorecard measures things this project
-# has not done rather than things it has done badly, and the three it will fail
-# loudest on are Pinned-Dependencies (the actions below are pinned by tag, not
-# by commit SHA — as are ci.yml and pacman-repo.yml), Branch-Protection (needs a
-# PAT to even read, and the setting has to exist), and Signed-Releases (release
-# assets carry a detached GPG signature, which Scorecard does not recognise; it
-# looks for cosign or an .asc alongside each asset). Fix them because they are
-# worth fixing, not because the number moved.
+# has not done rather than things it has done badly, and it will fail loudest on
+# Pinned-Dependencies (ci.yml and pacman-repo.yml still pin actions by tag —
+# `pinact run` fixes both), Branch-Protection (needs a PAT to even read, and the
+# setting has to exist), and Signed-Releases (release assets carry a detached
+# GPG signature, which Scorecard does not recognise; it looks for cosign or an
+# .asc alongside each asset). Fix them because they are worth fixing, not
+# because the number moved.
 
 on:
   # Re-score weekly so the badge reflects the repository as it is now, not as it
@@ -54,7 +59,7 @@ jobs:
           persist-credentials: false
 
       - name: run analysis
-        uses: ossf/scorecard-action@v2
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
         with:
           results_file: results.sarif
           results_format: sarif
