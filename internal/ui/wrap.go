@@ -86,6 +86,14 @@ func FindingPrefixLen(sev, file string) int {
 	return 7 + len(sev) + len(file)
 }
 
+// FindingHeadPrefixLen is FindingPrefixLen for the two-line finding layout,
+// where the head line carries the severity, the catalog label and the file and
+// the note is wrapped underneath it. The framing is
+// "  [" + severity + "] " + label + " (" + file + ")".
+func FindingHeadPrefixLen(sev, label, file string) int {
+	return 8 + len(sev) + len(label) + len(file)
+}
+
 // ansiRe matches ANSI/VT100 escape sequences so they can be stripped from
 // input before wrapping: their bytes would otherwise consume visible-width
 // budget without producing any visible output. LLM-generated findings should

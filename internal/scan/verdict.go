@@ -23,11 +23,27 @@ const (
 )
 
 // Finding is one issue the auditor reported.
+//
+// Why is the full composed text (canonical catalog description + the auditor's
+// note). It is what the drafted report and any JSON consumer see, and it is kept
+// whole so a report a maintainer receives still explains what the check means.
+//
+// Label and Note are the split form the terminal uses. Printing Why on every
+// finding repeated the same 30-word catalog description once per hit — twice for
+// the same check in a two-source package — which buried the one sentence that
+// was actually about this package. The terminal prints "Label: Note" instead.
 type Finding struct {
 	File     string `json:"file"`
 	Severity string `json:"severity"` // info | warning | critical
 	Quote    string `json:"quote"`
 	Why      string `json:"why"`
+	// ID is the catalog check id, kept so output can be grepped and scripted.
+	ID string `json:"id,omitempty"`
+	// Label is the short human name of the check (catalog-fixed, deterministic).
+	Label string `json:"label,omitempty"`
+	// Note is the auditor's sentence about THIS instance, with no catalog
+	// boilerplate prepended.
+	Note string `json:"note,omitempty"`
 }
 
 // Verdict is the auditor's structured result for one package. With the Tier-2
@@ -41,6 +57,18 @@ type Verdict struct {
 	Summary    string    `json:"summary"`
 	Findings   []Finding `json:"findings"`
 	Checks     []Check   `json:"checks,omitempty"`
+	// Synopsis is the auditor's plain description of what the package DOES —
+	// where it gets its sources, what it builds, what it installs. It is not a
+	// judgement and it is deliberately outside the derivation: nothing in it can
+	// change the verdict, the confidence or the severities.
+	//
+	// Tier 2 replaced the model's free-text summary with a count line
+	// ("No suspicious behaviour; 2 informational items noted"), which fixed the
+	// run-to-run drift but also removed the only place the output said what the
+	// package was. The count line duplicates the findings printed directly under
+	// it; the description does not exist anywhere else. Both facts argue for
+	// carrying a descriptive field separately rather than reviving the old one.
+	Synopsis string `json:"synopsis,omitempty"`
 }
 
 // Rank orders verdicts so callers can compute the worst across packages.
@@ -356,6 +384,7 @@ func parseVerdictResult(raw string) (Verdict, bool) {
 		Verdict    string    `json:"verdict"`
 		Confidence float64   `json:"confidence"`
 		Summary    string    `json:"summary"`
+		Synopsis   string    `json:"synopsis"`
 		Findings   []Finding `json:"findings"`
 		Checks     *[]Check  `json:"checks"`
 	}
@@ -374,6 +403,7 @@ func parseVerdictResult(raw string) (Verdict, bool) {
 			Verdict:    verdict,
 			Confidence: confidence,
 			Summary:    summary,
+			Synopsis:   strings.TrimSpace(parsed.Synopsis),
 			Findings:   findings,
 			Checks:     checks,
 		}, true
@@ -389,6 +419,7 @@ func parseVerdictResult(raw string) (Verdict, bool) {
 		Verdict:    parsed.Verdict,
 		Confidence: parsed.Confidence,
 		Summary:    parsed.Summary,
+		Synopsis:   strings.TrimSpace(parsed.Synopsis),
 		Findings:   parsed.Findings,
 	}, true
 }

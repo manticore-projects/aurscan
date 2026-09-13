@@ -25,8 +25,14 @@ func WriteReport(r scan.Result) string {
 	fmt.Fprintf(&sb, "Subject: [SECURITY] Possibly malicious AUR package: %s\n\n", r.Pkg)
 	fmt.Fprintf(&sb, "Package : %s\nAUR page: "+pkgURLFmt+"\n", r.Pkg, r.Pkg)
 	sb.WriteString("Scanner : aurscan (automated Claude-model PKGBUILD analysis)\n")
-	fmt.Fprintf(&sb, "Verdict : %s (confidence %.0f%%)\n\nSummary : %s\n\nFindings:\n",
-		r.V.Verdict, r.V.Confidence, r.V.Summary)
+	fmt.Fprintf(&sb, "Verdict : %s (confidence %.0f%%)\n", r.V.Verdict, r.V.Confidence)
+	if r.V.Synopsis != "" {
+		fmt.Fprintf(&sb, "\nWhat the package does (per the auditor):\n%s\n", r.V.Synopsis)
+	}
+	fmt.Fprintf(&sb, "\nSummary : %s\n\nFindings:\n", r.V.Summary)
+	// The report keeps the full composed Why. Its reader is a maintainer or a
+	// triager with no copy of the check catalog, so the canonical description
+	// has to travel with the finding even though the terminal omits it.
 	for _, f := range r.V.Findings {
 		fmt.Fprintf(&sb, "  - [%s] %s: %s\n      snippet: %s\n", f.Severity, f.File, f.Why, f.Quote)
 	}

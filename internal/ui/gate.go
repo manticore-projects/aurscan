@@ -40,6 +40,61 @@ func VerdictBadge(verdict string) string {
 	}
 }
 
+// showDerivedSummary reports whether the deterministic count line adds anything
+// the reader cannot already see.
+//
+// For a non-OK verdict it does: it carries the imperative ("do not build",
+// "warrant review before building"). For an OK verdict with a synopsis it does
+// not — "No suspicious behaviour; 2 informational items noted for context" is a
+// restatement of the green badge plus a count of the two lines printed directly
+// beneath it. Printing both cost three lines to say nothing, and crowded out the
+// one line that described the package.
+func showDerivedSummary(v scan.Verdict) bool {
+	return v.Verdict != "OK" || v.Synopsis == ""
+}
+
+// printFindings renders findings as a head line (severity, catalog label, file)
+// with the auditor's package-specific note wrapped underneath, then the evidence
+// snippet. The catalog's long canonical description is deliberately NOT printed
+// here — it is identical for every hit of the same check and belongs in the
+// drafted report, where the reader has no catalog to consult.
+func printFindings(out io.Writer, findings []scan.Finding, w int, quotes bool) {
+	for _, f := range findings {
+		label := f.Label
+		if label == "" {
+			label = f.ID
+		}
+		head := SevColor(f.Severity, "["+f.Severity+"]")
+		if label != "" {
+			fmt.Fprintf(out, "  %s %s %s\n", head, label, Dim("("+f.File+")"))
+		} else {
+			fmt.Fprintf(out, "  %s %s\n", head, Dim("("+f.File+")"))
+		}
+		body := f.Note
+		if strings.TrimSpace(body) == "" {
+			body = f.Why // legacy/fallback findings carry no split note
+		}
+		if strings.TrimSpace(body) != "" {
+			fmt.Fprintf(out, "%s%s\n", IndentBlock,
+				WrapLine(body, w-len(IndentBlock), IndentBlock))
+		}
+		if quotes && f.Quote != "" {
+			wrapped := WrapLine("> "+f.Quote, w-len(IndentQuote), IndentQuote)
+			lines := strings.Split(wrapped, "\n")
+			lines[0] = IndentBlock + lines[0]
+			for _, line := range lines {
+				// A source=() URL is one unbreakable token, so the wrapper can
+				// emit a line holding nothing but the quote marker before it.
+				// Printing that is noise: it reads as an empty quote.
+				if strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">")) == "" {
+					continue
+				}
+				fmt.Fprintln(out, Dim(line))
+			}
+		}
+	}
+}
+
 func printVerdict(r scan.Result) {
 	badge := VerdictBadge(r.V.Verdict)
 	meta := fmt.Sprintf("confidence %.0f%%", r.V.Confidence)
@@ -48,22 +103,13 @@ func printVerdict(r scan.Result) {
 	}
 	fmt.Printf("[%s] %s  %s\n", badge, Bold(r.Pkg), Dim(meta))
 	w := TerminalWidth()
-	if r.V.Summary != "" {
+	if r.V.Synopsis != "" {
+		fmt.Printf("  %s\n", WrapLine(r.V.Synopsis, w-len(IndentBody), IndentBody))
+	}
+	if r.V.Summary != "" && showDerivedSummary(r.V) {
 		fmt.Printf("  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 	}
-	for _, f := range r.V.Findings {
-		prefixLen := FindingPrefixLen(f.Severity, f.File)
-		fmt.Printf("  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
-			WrapLine(f.Why, w-prefixLen, IndentBody))
-		if f.Quote != "" {
-			wrapped := WrapLine("> "+f.Quote, w-len(IndentQuote), IndentQuote)
-			lines := strings.Split(wrapped, "\n")
-			lines[0] = IndentBody + lines[0]
-			for _, line := range lines {
-				fmt.Println(Dim(line))
-			}
-		}
-	}
+	printFindings(os.Stdout, r.V.Findings, w, true)
 }
 
 // autoPass reports whether results may proceed without any prompt. A non-OK
@@ -181,14 +227,13 @@ func GateVia(results []scan.Result, in io.Reader, out io.Writer, strict bool) bo
 	for _, r := range results {
 		fmt.Fprintf(out, "[%s] %s (confidence %.0f%%)\n",
 			VerdictBadge(r.V.Verdict), r.Pkg, r.V.Confidence)
-		if r.V.Summary != "" {
+		if r.V.Synopsis != "" {
+			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Synopsis, w-len(IndentBody), IndentBody))
+		}
+		if r.V.Summary != "" && showDerivedSummary(r.V) {
 			fmt.Fprintf(out, "  %s\n", WrapLine(r.V.Summary, w-len(IndentBody), IndentBody))
 		}
-		for _, f := range r.V.Findings {
-			prefixLen := FindingPrefixLen(f.Severity, f.File)
-			fmt.Fprintf(out, "  %s %s: %s\n", SevColor(f.Severity, "["+f.Severity+"]"), f.File,
-				WrapLine(f.Why, w-prefixLen, IndentBody))
-		}
+		printFindings(out, r.V.Findings, w, false)
 	}
 	if autoPass(results, strict) {
 		return true

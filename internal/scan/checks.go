@@ -135,6 +135,116 @@ var checkCatalog = map[string]checkDef{
 	"note":                    {"info", "Auditor note (not itself a risk)"},
 }
 
+// checkLabel is the short human name printed in the terminal, one per catalog
+// id. The catalog Desc explains what the check MEANS and is the right text for a
+// report a stranger will read; it is the wrong text to repeat on every hit in a
+// terminal, where it pushed the auditor's package-specific note off to the right
+// and printed the same paragraph twice for a package with two remote sources.
+//
+// Labels are catalog-fixed, so they are as deterministic as the severities.
+// TestEveryCheckHasALabel keeps this table complete.
+var checkLabel = map[string]string{
+	"pipe_to_shell":              "pipes an unrelated host's script into a shell",
+	"unrelated_pkg_manager_exec": "installs an unrelated package-manager package",
+	"credential_access":          "reads credentials or secrets",
+	"remote_code_exec":           "executes a constructed or fetched payload",
+	"kernel_bpf_preload":         "loads eBPF/kernel code or hooks the loader",
+	"exfiltration":               "sends data to a third party",
+	"disguised_source":           "a source disguised or impersonating a forge",
+	"obfuscated_payload":         "executes an obfuscated or decoded blob",
+	"prompt_injection":           "package text addressed to a scanner",
+	"privilege_persistence":      "grants or escalates privilege",
+	"install_scriptlet_worm":     "install scriptlet republishes itself",
+	"scriptlet_system_takeover":  "install scriptlet changes the live system as root",
+	"other_critical":             "other critical behaviour",
+
+	"network_fetch_outside_sources": "fetches a URL outside source=()",
+	"writes_outside_build":          "writes outside $srcdir/$pkgdir",
+	"unverifiable_provenance":       "source provenance cannot be established",
+	"unexplained_step":              "a build step with no plausible reason",
+	"reputation_risk":               "reputation risk",
+	"incomplete_scan":               "a referenced script was not supplied",
+	"pkg_manager_build_deps":        "fetches its own deps unpinned",
+	"service_enabled_by_scriptlet":  "scriptlet enables a systemd service",
+	"sudoers_for_own_service":       "sudoers drop-in for its own service",
+	"unpinned_upstream_installer":   "pipes its own vendor's installer into a shell",
+	"telemetry":                     "reports the install to its own upstream",
+	"insecure_tls_fetch":            "downloads with TLS verification disabled",
+	"packaging_policy_violation":    "packaging guideline violation",
+	"other_warning":                 "other behaviour warranting review",
+
+	"build_cache_unconfined":   "build cache written outside $srcdir",
+	"remote_source_unreviewed": "remote source archive not reviewed",
+	"pkg_manager_deps_pinned":  "fetches its own deps, lockfile-pinned",
+	"note":                     "note",
+}
+
+// perPackage lists checks that describe a property of the PACKAGE, not of one
+// line, and must therefore be reported once however many times they are
+// observed. The prompt already says so for remote_source_unreviewed; the model
+// ignored it on logalize-bin and emitted the identical check twice (once for the
+// source=() tarball, once for the leftover build artifacts), printing the same
+// catalog paragraph twice under an OK verdict.
+//
+// Instructions are advice. This is the guarantee — the same reason resolveHedges
+// and confineIncompleteScan live in Go rather than in the prompt.
+//
+// Deliberately restricted to info-tier checks. Collapsing by id at warning or
+// critical tier would merge two genuinely distinct findings — two separate
+// credential reads in one file are two findings, not one — and that loss is far
+// worse than a repeated paragraph.
+var perPackage = map[string]bool{
+	"remote_source_unreviewed": true,
+	"build_cache_unconfined":   true,
+	"pkg_manager_deps_pinned":  true,
+	"note":                     false,
+}
+
+// collapsePerPackage reduces each perPackage check to a single triggered entry,
+// keeping the longest note (the most informative one) and joining the distinct
+// evidence snippets so nothing observed is silently dropped.
+func collapsePerPackage(checks []Check) []Check {
+	first := map[string]int{}
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if !c.Triggered || !perPackage[c.ID] {
+			out = append(out, c)
+			continue
+		}
+		i, seen := first[c.ID]
+		if !seen {
+			first[c.ID] = len(out)
+			out = append(out, c)
+			continue
+		}
+		prev := out[i]
+		// Join the notes rather than keeping one. Each observation says something
+		// the other does not (which archive, which leftover artifact), and the
+		// point of collapsing was to drop the repeated CATALOG text, not the
+		// auditor's package-specific text.
+		if n := strings.TrimSpace(c.Note); n != "" && !strings.Contains(prev.Note, n) {
+			if strings.TrimSpace(prev.Note) == "" {
+				prev.Note = n
+			} else {
+				prev.Note = strings.TrimRight(prev.Note, ". ") + ". " + n
+			}
+		}
+		if e := strings.TrimSpace(c.Evidence); e != "" &&
+			!strings.Contains(prev.Evidence, e) {
+			if strings.TrimSpace(prev.Evidence) == "" {
+				prev.Evidence = e
+			} else {
+				prev.Evidence += "  " + e
+			}
+		}
+		if prev.File != c.File && c.File != "" && !strings.Contains(prev.File, c.File) {
+			prev.File += ", " + c.File
+		}
+		out[i] = prev
+	}
+	return out
+}
+
 // severityRank orders severities for "worst wins" reduction.
 var severityRank = map[string]int{"info": 0, "warning": 1, "critical": 2}
 
@@ -263,7 +373,7 @@ func confinePinnedDeps(checks []Check) []Check {
 }
 
 func deriveVerdict(checks []Check) (verdict string, findings []Finding, confidence float64, summary string) {
-	checks = confinePinnedDeps(confineIncompleteScan(resolveHedges(checks)))
+	checks = collapsePerPackage(confinePinnedDeps(confineIncompleteScan(resolveHedges(checks))))
 	var nCrit, nWarn, nInfo int
 	for _, c := range checks {
 		if !c.Triggered {
@@ -281,15 +391,23 @@ func deriveVerdict(checks []Check) (verdict string, findings []Finding, confiden
 		default:
 			nInfo++
 		}
+		note := strings.TrimSpace(c.Note)
 		why := def.Desc
-		if n := strings.TrimSpace(c.Note); n != "" {
-			why = def.Desc + " — " + n
+		if note != "" {
+			why = def.Desc + " — " + note
+		}
+		label := checkLabel[c.ID]
+		if label == "" {
+			label = c.ID
 		}
 		findings = append(findings, Finding{
 			File:     c.File,
 			Severity: def.Severity,
 			Quote:    c.Evidence,
 			Why:      why,
+			ID:       c.ID,
+			Label:    label,
+			Note:     note,
 		})
 	}
 	// Stable ordering: severity desc, then id/file, so output is byte-identical
