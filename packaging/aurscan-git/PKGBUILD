@@ -2,7 +2,7 @@
 
 pkgname=aurscan-git
 _pkgname=aurscan
-pkgver=0.7.1.r4.g748cfc5
+pkgver=0.9.1
 pkgrel=1
 pkgdesc='LLM-powered pre-build malware scanner for AUR packages (git master)'
 arch=('x86_64' 'aarch64')

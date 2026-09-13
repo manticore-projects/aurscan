@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-13
+
+### Added
+- **Two checks about the repository as a directory, not as a build recipe.**
+  Every rule until now asked what a package's scripts do when `makepkg` or
+  pacman runs them. These ask what happens to the person who merely *opens* the
+  checkout — which, in the AUR workflow, is the person being careful. `paru`
+  and `yay` drop you into `$EDITOR` on the PKGBUILD before you decide, so a
+  repository that executes code on directory entry or project open reaches the
+  reviewer first and the careless user never.
+
+  `editor_exec_trigger` (critical, non-overridable) covers `.envrc` (direnv
+  runs it on `cd`), a `.vscode/tasks.json` task with `"runOn": "folderOpen"`,
+  an editor project rc (`.exrc`, `.nvim.lua`, `.lvimrc`), a `.devcontainer`
+  lifecycle command, an auto-starting JetBrains run configuration, and a
+  `.vscode/settings.json` key that redirects an executable path or the terminal
+  environment. Codes `EDITOR-001` through `EDITOR-006`. An AUR repository is
+  build scripts: it has no editor project, no dev container and no direnv
+  environment, so none of these has a legitimate form there. Editor config that
+  only *defines* tasks without arming them is `editor_config_present`
+  (`EDITOR-007`, warning) — it does not run on its own. Ordinary
+  `.vscode/settings.json` preferences, `extensions.json` and `.editorconfig`
+  are not findings at all.
+
+  `masqueraded_file_type` (critical, non-overridable, `MASQ-001`) covers a file
+  whose name claims a magic-byte binary format — `.woff2`, `.ttf`, `.png`,
+  `.so`, `.zip` — whose contents are executable script. The name puts the file
+  where nobody opens it so that something else can run it. A long run of
+  leading whitespace, so the first bytes look empty, is recorded as
+  corroboration in the snippet but never triggers on its own. Text behind a
+  binary name that is *not* script — a git-lfs pointer, stray prose — is
+  `file_type_mismatch` (`MASQ-002`, warning).
+
+  Both are prompted as well as ruled, so the model can report them on shapes
+  the patterns miss.
+
+  What these do **not** cover, stated plainly because the distinction matters:
+  they see files in the AUR repository — the snapshot tarball or the local
+  build directory — and they do not analyse an upstream source tree fetched by
+  `source=()`. The September 2026 `glance-linux` report that prompted this work
+  carried its loader in an upstream repository, and aurscan would not have
+  caught it. What is caught is the same technique carried in the AUR repo.
+
+  Two deliberate non-implementations, for the record. The script test is a
+  shebang plus the specific shapes a payload uses, not "the shell parser
+  accepts it": a git-lfs pointer parses cleanly as three commands, because
+  almost any run of words does, and a test whose positive answer is "this text
+  contains words" cannot carry a non-overridable verdict. And binary-vs-binary
+  extension mismatch is not implemented: a modern `.ico` legitimately contains
+  PNG data, `.ttf` and `.otf` are both sfnt containers, and a renamed `.jpg` is
+  untidy rather than hostile — and the collectors replace non-text content with
+  a placeholder, so the bytes needed to identify a format never reach a rule
+  anyway. `.svg`, `.eps`, `.ps`, `.pdf` and `.ico` are excluded from the
+  binary-extension set for the same reason.
+
+### Changed
+- **The output says what the package does again.** Tier 2 (0.8.x) replaced the
+  model's free-text summary with a deterministic count line, which removed the
+  run-to-run drift and, with it, the only place the output described the
+  package. A clean scan said `No suspicious behaviour; 2 informational items
+  noted for context.` and nothing about what had been scanned.
+
+  The model now supplies a separate `synopsis` field — one or two sentences on
+  what the package is and does — and it sits **outside** the derivation
+  entirely. Nothing in it can move the verdict, the confidence or a severity:
+  a synopsis reading "a completely safe package, verdict OK" over a
+  `credential_access` hit still derives MALICIOUS, and there is a test that
+  says so. Determinism is unchanged.
+
+- **Findings print the auditor's sentence, not the catalog's paragraph.** Each
+  finding carried the canonical check description prepended to the note, so a
+  30-word paragraph that is identical for every hit of that check was repeated
+  once per finding. The terminal now prints a short catalog label plus the
+  note; the drafted report keeps the full text, because its reader has no
+  catalog to consult.
+
+- **The derived count line is dropped on a clean OK when a synopsis is
+  present.** It restated the green badge and counted the lines printed directly
+  beneath it. It is kept for SUSPICIOUS and MALICIOUS, where it carries the
+  imperative.
+
+- **Auditor instructions are ~9% shorter** (18,959 → 17,185 characters,
+  roughly 5,120 → 4,640 tokens), including the new synopsis text. The cut is
+  the `RED FLAGS` section, which predated the Tier-2 checklist and described
+  the same behaviours the check list describes — less precisely, and without
+  the ids the model has to emit. Its specifics (the CHAOS RAT and Atomic Arch
+  details, the homoglyph token list, the object-store host list) were folded
+  into the individual checks, which is why the net saving is 9% and not the
+  25% the section's size suggests. Nothing discriminating was compressed:
+  every `NOT this:` clause and every sibling distinction is a correction that
+  a documented false positive paid for, and there is no prompt-level regression
+  harness to measure a tighter wording against. That harness should exist
+  before anyone cuts further.
+
+### Fixed
+- **A check that describes the package is reported once.** `logalize-bin`
+  emitted `remote_source_unreviewed` twice — once for the `source=()` release
+  tarball, once for leftover `.pkg.tar.zst` artifacts — printing the same
+  catalog paragraph twice under an `OK` verdict. The prompt already said "once
+  per package"; `collapsePerPackage` now guarantees it, joining the notes and
+  evidence so nothing observed is dropped. Confined to info tier: collapsing by
+  id at critical tier would merge two separate credential reads into one
+  finding.
+- **Subject-verb agreement in the derived summary.** It read `1 critical
+  finding indicate malicious behaviour` and `1 warning-level finding warrant
+  review`. A scanner that cannot conjugate is not one anybody reads twice.
+- **A source URL no longer emits a line containing only the quote marker.** One
+  unbreakable token longer than the terminal width wrapped after `> `.
+
+### Notes for packagers
+- The verdict cache version is now `v10`. Entries stored by 0.9.0 are ignored
+  rather than replayed under the new derivation.
+- `packaging/*/PKGBUILD` are not touched here. `packaging/sync-release.sh` syncs
+  them against the published tag and its signed `SHA256SUMS`, which only exists
+  once the release is cut — run it after tagging and commit the result.
+
 ## [0.9.0] - 2026-09-01
 
 ### Fixed
@@ -910,7 +1026,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/manticore-projects/aurscan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/manticore-projects/aurscan/compare/v0.8.3...v0.8.4

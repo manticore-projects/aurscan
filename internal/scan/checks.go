@@ -539,6 +539,15 @@ func synthSummary(verdict string, nCrit, nWarn, nInfo int) string {
 		}
 		return fmt.Sprintf("%d %ss", n, s)
 	}
+	// The verb has to agree with the subject. "1 critical finding indicate
+	// malicious behaviour" is the first line of an accusation, and a scanner
+	// that cannot conjugate is not one anybody reads twice.
+	verb := func(n int, singular, plural string) string {
+		if n == 1 {
+			return singular
+		}
+		return plural
+	}
 	switch verdict {
 	case "OK":
 		if nInfo == 0 {
@@ -546,13 +555,18 @@ func synthSummary(verdict string, nCrit, nWarn, nInfo int) string {
 		}
 		return fmt.Sprintf("No suspicious behaviour; %s noted for context.", plural(nInfo, "informational item"))
 	case "SUSPICIOUS":
-		return fmt.Sprintf("%s warrant review before building.", capitalize(plural(nWarn, "warning-level finding")))
+		return fmt.Sprintf("%s %s review before building.",
+			capitalize(plural(nWarn, "warning-level finding")),
+			verb(nWarn, "warrants", "warrant"))
 	case "MALICIOUS":
 		parts := plural(nCrit, "critical finding")
+		n := nCrit
 		if nWarn > 0 {
 			parts += " and " + plural(nWarn, "warning")
+			n += nWarn
 		}
-		return fmt.Sprintf("%s indicate malicious behaviour; do not build.", capitalize(parts))
+		return fmt.Sprintf("%s %s malicious behaviour; do not build.",
+			capitalize(parts), verb(n, "indicates", "indicate"))
 	}
 	return ""
 }

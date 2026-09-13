@@ -2,7 +2,7 @@
 # Contributor: Tom Hale <tom at hale dot ee>
 
 pkgname=aurscan
-pkgver=0.7.1
+pkgver=0.9.1
 pkgrel=1
 pkgdesc='LLM-powered pre-build malware scanner for AUR packages (with paru / yay hooks)'
 arch=('x86_64' 'aarch64')
@@ -19,7 +19,7 @@ optdepends=(
 )
 options=('!lto')
 source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('3081bf850416534dac439a8d151990f9f67c5584e3370b3fe9da8694c7100092')
+sha256sums=('332bad9e6501c7218fc9ca90eb959086cb42d16647d703de39e2d5bfb67e2022')
 
 _pkgpath='github.com/manticore-projects/aurscan/internal/version'
 

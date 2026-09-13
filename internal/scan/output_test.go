@@ -132,3 +132,28 @@ func TestPromptAsksForSynopsisAndInstanceNotes(t *testing.T) {
 		}
 	}
 }
+
+// "1 critical finding indicate malicious behaviour" was the literal output.
+func TestSummaryVerbAgreesWithSubject(t *testing.T) {
+	cases := []struct {
+		checks []Check
+		want   string
+	}{
+		{[]Check{{ID: "credential_access", Triggered: true, File: "a"}},
+			"1 critical finding indicates"},
+		{[]Check{{ID: "credential_access", Triggered: true, File: "a"},
+			{ID: "exfiltration", Triggered: true, File: "b"}},
+			"2 critical findings indicate"},
+		{[]Check{{ID: "insecure_tls_fetch", Triggered: true, File: "a"}},
+			"1 warning-level finding warrants"},
+		{[]Check{{ID: "insecure_tls_fetch", Triggered: true, File: "a"},
+			{ID: "telemetry", Triggered: true, File: "b"}},
+			"2 warning-level findings warrant"},
+	}
+	for _, c := range cases {
+		got := VerdictFromChecks(c.checks).Summary
+		if !strings.Contains(got, c.want) {
+			t.Errorf("summary = %q, want it to contain %q", got, c.want)
+		}
+	}
+}
