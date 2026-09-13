@@ -74,7 +74,17 @@ var checkCatalog = map[string]checkDef{
 	"privilege_persistence":     {"critical", "Grants or escalates privilege: setuid/setgid or setcap on a binary, a sudoers rule beyond what the package's own service account needs, or pkexec policy. NOT this: enabling a service, or a sudoers rule scoped to the package's own daemon"},
 	"install_scriptlet_worm":    {"critical", "An install scriptlet that replicates itself: copies its own source, or uses the victim's AUR credentials to push to aur.archlinux.org"},
 	"scriptlet_system_takeover": {"critical", "An install scriptlet makes root-level system changes: drops a binary into a system bin directory, writes and enables a systemd unit, or invokes pacman"},
-	"other_critical":            {"critical", "Another clearly malicious behaviour not covered by a specific check"},
+	// Execution that happens to whoever OPENS the repository, before any build.
+	// The AUR review workflow is "your helper drops you into $EDITOR on the
+	// PKGBUILD", so a repo carrying an auto-run editor or shell-environment
+	// config reaches the careful user first. An AUR repository is build scripts:
+	// it has no editor project, no dev container and no direnv environment, so
+	// no legitimate form exists.
+	"editor_exec_trigger": {"critical", "A file in the package repository causes a command to run on directory entry or project open (.envrc, a VS Code folderOpen task, an editor project rc, a devcontainer lifecycle hook, an auto-start run configuration) — this executes before any build, on whoever reviews the package"},
+	// Narrow by design: it is text that is SCRIPT behind a binary name. A .jpg
+	// that is really a PNG is untidy, not hostile, and is not this check.
+	"masqueraded_file_type": {"critical", "A file whose name claims a magic-byte binary format (.woff2, .png, .so) contains executable script — the name places it where nobody reads it so that something else can run it"},
+	"other_critical":        {"critical", "Another clearly malicious behaviour not covered by a specific check"},
 
 	// --- warning: any one (and no critical) => SUSPICIOUS -----------------
 	"network_fetch_outside_sources": {"warning", "Fetches a URL not listed in source=() during build/install that is not a normal language-toolchain dependency fetch"},
@@ -95,7 +105,11 @@ var checkCatalog = map[string]checkDef{
 	"telemetry":                    {"warning", "Reports the install to the project's own upstream (an analytics endpoint, an install counter). Not exfiltration: no user data, no third party. Worth surfacing because the user did not ask for it"},
 	"insecure_tls_fetch":           {"warning", "Downloads with certificate verification disabled (curl -k/--insecure, wget --no-check-certificate), so the peer is unauthenticated. Worse when the checksum used to verify the download comes from the same host"},
 	"packaging_policy_violation":   {"warning", "Breaks an Arch packaging guideline without being malicious: installing outside $pkgdir, an arch=() that does not match a compiled binary, a pkgver that disagrees with the source URL, missing checksums on a non-VCS source"},
-	"other_warning":                {"warning", "Another behaviour warranting suspicion not covered by a specific check"},
+	// The unarmed twins of the two critical checks above. Reported because an
+	// AUR repository has no use for either, but nothing runs on its own.
+	"editor_config_present": {"warning", "Editor project configuration in the package repository that defines runnable tasks but does not auto-run them. An AUR repository has no editor project; the definitions are one keystroke from executing"},
+	"file_type_mismatch":    {"warning", "A file whose name claims a binary format contains text that is not script (a git-lfs pointer, stray prose). Misleading packaging rather than an attack"},
+	"other_warning":         {"warning", "Another behaviour warranting suspicion not covered by a specific check"},
 
 	// --- info: never changes the verdict on its own -----------------------
 	// Build-cache hygiene is real and worth telling the user about, but it is
@@ -156,6 +170,8 @@ var checkLabel = map[string]string{
 	"privilege_persistence":      "grants or escalates privilege",
 	"install_scriptlet_worm":     "install scriptlet republishes itself",
 	"scriptlet_system_takeover":  "install scriptlet changes the live system as root",
+	"editor_exec_trigger":        "runs a command when the repo is opened",
+	"masqueraded_file_type":      "script hidden behind a binary file name",
 	"other_critical":             "other critical behaviour",
 
 	"network_fetch_outside_sources": "fetches a URL outside source=()",
@@ -171,6 +187,8 @@ var checkLabel = map[string]string{
 	"telemetry":                     "reports the install to its own upstream",
 	"insecure_tls_fetch":            "downloads with TLS verification disabled",
 	"packaging_policy_violation":    "packaging guideline violation",
+	"editor_config_present":         "editor task definitions in the repository",
+	"file_type_mismatch":            "binary file name holding non-script text",
 	"other_warning":                 "other behaviour warranting review",
 
 	"build_cache_unconfined":   "build cache written outside $srcdir",
@@ -297,6 +315,53 @@ func resolveHedges(checks []Check) []Check {
 	return out
 }
 
+// armedTwin pairs a critical check with the warning that describes the same FILE
+// in its unarmed form. These are the inverse of siblingOf: there the warning is
+// the more specific claim (it asserts the host belongs to upstream), so the
+// critical is dropped. Here the CRITICAL is the more specific claim — it asserts
+// the trigger is armed, or that the hidden text is code — so the warning is the
+// one that goes.
+//
+// Keyed by file rather than by (file, evidence): the two ids are answers about
+// the same file, and the model quotes a different line for each (the folderOpen
+// property for the armed form, the first line for the presence observation), so
+// an evidence match would never fire.
+var armedTwin = map[string]string{
+	"editor_exec_trigger":   "editor_config_present",
+	"masqueraded_file_type": "file_type_mismatch",
+}
+
+// resolveArmedTwins drops the unarmed warning when the armed critical was
+// reported for the same file. Both are true — a folderOpen task IS also a task
+// definition — so this is not a contradiction to resolve but a redundancy to
+// remove, and printing the weaker one next to the stronger one reads as
+// disagreement.
+func resolveArmedTwins(checks []Check) []Check {
+	armed := map[string]bool{}
+	for _, c := range checks {
+		if !c.Triggered {
+			continue
+		}
+		if _, ok := armedTwin[c.ID]; ok {
+			armed[c.ID+"\x00"+c.File] = true
+		}
+	}
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		drop := false
+		for crit, warn := range armedTwin {
+			if c.ID == warn && c.Triggered && armed[crit+"\x00"+c.File] {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // archiveArtifact matches names whose contents an AUR repository never holds: a
 // release archive fetched by source=(), or a package makepkg itself produced.
 // Deliberately NOT listed: .install, .hook, .patch, .diff, .sh — those are the
@@ -373,7 +438,8 @@ func confinePinnedDeps(checks []Check) []Check {
 }
 
 func deriveVerdict(checks []Check) (verdict string, findings []Finding, confidence float64, summary string) {
-	checks = collapsePerPackage(confinePinnedDeps(confineIncompleteScan(resolveHedges(checks))))
+	checks = collapsePerPackage(confinePinnedDeps(confineIncompleteScan(
+		resolveArmedTwins(resolveHedges(checks)))))
 	var nCrit, nWarn, nInfo int
 	for _, c := range checks {
 		if !c.Triggered {

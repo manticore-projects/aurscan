@@ -643,6 +643,11 @@ func Scan(files map[string]string) []Hit {
 	// "did I even get all the files?" — the question that a PKGBUILD-only scan
 	// of an install-scriptlet worm can never answer from the PKGBUILD alone.
 	checkReferences(files, add)
+	// File-identity passes (masquerade.go). Both ask what happens to someone
+	// who opens the repository rather than what happens when makepkg runs it,
+	// so neither belongs in the per-file regex loop above.
+	checkEditorTriggers(files, add)
+	checkMasqueradedTypes(files, add)
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].File != hits[j].File {
 			return hits[i].File < hits[j].File
@@ -774,6 +779,17 @@ var fatalCodes = map[string]bool{
 	"OBF-004": true, "UNI-001": true, "UNI-002": true,
 	// attempts to steer the reviewer itself
 	"AI-001": true, "AI-002": true, "AI-003": true, "AI-004": true, "AI-005": true,
+	// Execution on directory entry / project open. An AUR repository is build
+	// scripts: it has no editor project, no dev container and no direnv
+	// environment, so there is no legitimate form of any of these. The armed
+	// forms only — EDITOR-007 (unarmed task definitions) is a warning and is
+	// deliberately absent, as is MASQ-002.
+	"EDITOR-001": true, "EDITOR-002": true, "EDITOR-003": true,
+	"EDITOR-004": true, "EDITOR-005": true, "EDITOR-006": true,
+	// A file named as a binary format holding executable script. The only
+	// reason to put a script behind a .woff2 or .png name is to have it run by
+	// something other than the person reading the directory listing.
+	"MASQ-001": true,
 }
 
 // fatalInInstallOnly are codes that are damning inside a scriptlet but have a
@@ -900,6 +916,17 @@ var checkIDFor = map[string]string{
 	"AI-003":    "prompt_injection",
 	"AI-004":    "prompt_injection",
 	"AI-005":    "prompt_injection",
+	// execution triggered by opening the repository, not by building it
+	"EDITOR-001": "editor_exec_trigger",
+	"EDITOR-002": "editor_exec_trigger",
+	"EDITOR-003": "editor_exec_trigger",
+	"EDITOR-004": "editor_exec_trigger",
+	"EDITOR-005": "editor_exec_trigger",
+	"EDITOR-006": "editor_exec_trigger",
+	"EDITOR-007": "editor_config_present",
+	// a file whose name claims a binary format and whose contents are text
+	"MASQ-001": "masqueraded_file_type",
+	"MASQ-002": "file_type_mismatch",
 	// the scanner's own blind spot, not the package's behaviour
 	"REF-001": "incomplete_scan",
 	"REF-003": "incomplete_scan",
@@ -982,6 +1009,7 @@ func checkCatalogSeverityIsCritical(id string) bool {
 		"disguised_source", "obfuscated_payload", "prompt_injection",
 		"privilege_persistence", "install_scriptlet_worm",
 		"hidden_install_scriptlet", "scriptlet_system_takeover",
+		"editor_exec_trigger", "masqueraded_file_type",
 		"other_critical":
 		return true
 	}

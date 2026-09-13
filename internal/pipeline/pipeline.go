@@ -247,9 +247,14 @@ func rulesOnlyVerdict(pkg string, hits []rules.Hit, note string) scan.Result {
 	v.Checks = toScanChecks(rules.AllChecks(hits))
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Code < hits[j].Code })
 	for _, h := range hits {
+		// The rule's own Name is the label here. The catalog label belongs to a
+		// check id, and a rules-only scan has no checklist — but the terminal
+		// still prints Label + Note, so leaving Label empty would render these
+		// findings as a bare "[critical] (file)" head line.
 		v.Findings = append(v.Findings, scan.Finding{
 			File: h.File, Severity: string(h.Severity),
 			Quote: h.Snippet, Why: h.Code + " " + h.Name,
+			ID: h.Code, Label: h.Name, Note: h.Code + " (static rule)",
 		})
 	}
 	return scan.Result{Pkg: pkg, V: v}

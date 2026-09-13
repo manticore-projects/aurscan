@@ -149,6 +149,28 @@ CRITICAL checks (a genuine hit means the package is malicious):
   +x's it; writes a systemd unit (often "cat <<EOF >/etc/systemd/system/X" —
   read the redirection target, not just the heredoc body) and enables it; or
   invokes pacman to pull in a dependency of its own payload.
+- editor_exec_trigger — a file in the package repository that causes a command
+  to run on directory entry or project open, before any build: a .envrc
+  (direnv), a .vscode/tasks.json task with "runOn": "folderOpen", an editor
+  project rc (.exrc, .nvim.lua, .lvimrc), a .devcontainer lifecycle command
+  (postCreateCommand and friends), an auto-starting JetBrains run
+  configuration, or a .vscode/settings.json key that redirects an executable
+  path or the terminal environment. The victim is whoever REVIEWS the package:
+  the AUR workflow opens the checkout in an editor before the user decides.
+  An AUR repository is build scripts — it has no editor project, no dev
+  container and no direnv environment — so none of these has a legitimate form
+  here. NOT this: editor config that only defines tasks without arming them
+  (use editor_config_present), and .editorconfig, which is inert.
+- masqueraded_file_type — a file whose name claims a magic-byte binary format
+  (.woff2, .ttf, .png, .so, .zip) whose contents are executable script: a
+  shebang, shell, JavaScript or Python. The name puts it where nobody opens it
+  so that something else can run it. Corroborating but not sufficient on its
+  own: a long run of leading spaces so the first bytes look empty, and a name
+  occupying a plausible gap in a real asset set (a "500" weight of a font that
+  ships only 400 and 900). NOT this: a .jpg that is really a PNG, a .ico
+  containing PNG data, .ttf vs .otf, or a git-lfs pointer file — binary-format
+  confusion and pointer files are untidy, not hostile (use file_type_mismatch
+  if the contents are text but not script).
 - other_critical — another clearly malicious behaviour not covered above.
 
 WARNING checks (a hit means the package needs review before building):
@@ -215,6 +237,13 @@ WARNING checks (a hit means the package needs review before building):
   malicious: installing outside $pkgdir, arch=() not matching a compiled binary,
   a pkgver disagreeing with its own source URL, missing checksums on a non-VCS
   source.
+- editor_config_present — editor project configuration in the repository that
+  defines runnable tasks or debug targets without arming them to auto-run. An
+  AUR repository has no editor project, so it does not belong there and the
+  definitions are one keystroke from executing — but nothing runs on its own.
+- file_type_mismatch — a file whose name claims a binary format holds text that
+  is NOT script: a git-lfs pointer, a stray README, a leftover URL. Misleading
+  packaging, not an attack.
 - other_warning — another behaviour warranting suspicion not covered above.
 
 Some ids are ALTERNATIVES, not a scale. Each pair below describes one behaviour
@@ -229,6 +258,14 @@ Report exactly ONE of each pair for a given piece of evidence. Reporting both is
 not caution, it is declining to answer — and the answer is the whole point of
 asking you rather than a regex. If you cannot decide, take the warning: say in
 the note what you would need to know to decide, and let the user judge.
+
+Two further pairs work the other way round, because the critical member asserts
+MORE rather than less — that the trigger is armed, or that the hidden text is
+code. Report the critical id when that is true and the warning id otherwise,
+never both for the same file:
+
+  editor_exec_trigger    over  editor_config_present
+  masqueraded_file_type  over  file_type_mismatch
 
 A note on the critical tier: one critical check means MALICIOUS and blocks the
 build. Use a critical id only when you would tell the user not to install the
