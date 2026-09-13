@@ -11,7 +11,7 @@ A Claude, Codex, or local model reads the `PKGBUILD` for you and blocks the buil
 [![Release](https://img.shields.io/github/v/release/manticore-projects/aurscan?sort=semver)](https://github.com/manticore-projects/aurscan/releases)
 [![pacman repo](https://img.shields.io/badge/pacman%20repo-manticore-1793D1?logo=archlinux&logoColor=white)](https://manticore-projects.github.io/aurscan/)
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![AUR version](https://img.shields.io/aur/version/aurscan?logo=archlinux&logoColor=white&label=AUR)](https://aur.archlinux.org/packages/aurscan)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/manticore-projects/aurscan/badge)](https://scorecard.dev/viewer/?uri=github.com/manticore-projects/aurscan)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 </div>

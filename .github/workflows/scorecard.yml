@@ -1,0 +1,82 @@
+name: scorecard
+
+# OpenSSF Scorecard — supply-chain security posture of this repository.
+#
+# The score is published to the Scorecard API so the README badge resolves, and
+# uploaded as SARIF so the findings land in the Security tab with remediation
+# text attached. Nothing here gates a build: a scanner that blocks its own
+# release on its own hygiene score would be the wrong trade.
+#
+# Two constraints the action imposes, both easy to break by accident:
+#   * publish_results requires `id-token: write` on the job — without it the
+#     badge silently never appears.
+#   * only `push` to the default branch and `schedule` are supported triggers.
+#     pull_request and workflow_dispatch are experimental and fork runs are not
+#     supported at all, so this deliberately runs on neither.
+#
+# Expect the first score to be mediocre. Scorecard measures things this project
+# has not done rather than things it has done badly, and the three it will fail
+# loudest on are Pinned-Dependencies (the actions below are pinned by tag, not
+# by commit SHA — as are ci.yml and pacman-repo.yml), Branch-Protection (needs a
+# PAT to even read, and the setting has to exist), and Signed-Releases (release
+# assets carry a detached GPG signature, which Scorecard does not recognise; it
+# looks for cosign or an .asc alongside each asset). Fix them because they are
+# worth fixing, not because the number moved.
+
+on:
+  # Re-score weekly so the badge reflects the repository as it is now, not as it
+  # was at the last push. Saturday 04:00 UTC — off the release path.
+  schedule:
+    - cron: "0 4 * * 6"
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Upload the SARIF result to code scanning.
+      security-events: write
+      # Needed to read the workflow run history for some checks.
+      actions: read
+      contents: read
+      # OIDC token, so the published result can be attributed to this repository
+      # rather than asserted by whoever calls the API. Required for the badge.
+      id-token: write
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: run analysis
+        uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishing replaces the OpenSSF team's own weekly scan of this
+          # repository with this run, and is what makes the README badge and the
+          # REST API work. Public repositories only.
+          publish_results: true
+          # A classic PAT with `public_repo` scope is the only way Scorecard can
+          # read branch-protection settings; without it that one check is
+          # skipped rather than failed. Add the secret and uncomment to enable.
+          # repo_token: ${{ secrets.SCORECARD_TOKEN }}
+
+      # Kept for debugging a score that moved unexpectedly. Artifacts expire on
+      # their own; the SARIF upload below is the durable record.
+      - name: upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
+
+      - name: upload to code scanning
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          sarif_file: results.sarif
