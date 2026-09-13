@@ -1,0 +1,35 @@
+# Dependency updates.
+#
+# Two ecosystems, both of which matter here for the same reason: aurscan's whole
+# claim is that it reads hostile input safely, and the two things that touch
+# that input first are the shell parser it vendors and the CI that builds and
+# signs the binaries people install.
+version: 2
+updates:
+  # mvdan.cc/sh is the parser every command-scoped rule runs against. A bug in
+  # it is a deobfuscation gap in aurscan.
+  #
+  # NOTE: dependencies are vendored. Dependabot updates go.mod/go.sum but does
+  # NOT re-run `go mod vendor`, so its PRs will fail the `vendor` job in ci.yml
+  # by design. Run `go mod vendor` on the branch and push before merging — the
+  # failing job is the reminder, not a nuisance.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Actions are pinned by commit SHA. Dependabot understands SHA pins and will
+  # bump the SHA while rewriting the trailing `# vX` comment, so pinning does
+  # not cost us updates.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"

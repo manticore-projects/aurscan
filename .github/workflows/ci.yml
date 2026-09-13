@@ -5,6 +5,17 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Default every job to read-only. The two jobs that genuinely need to write
+# (release, sign) re-grant contents: write for themselves, so the grant sits
+# next to the step that uses it and nothing else in the file inherits it.
+#
+# Without this block, jobs inherit the repository default — which on many
+# repositories is write-all, meaning a compromised dependency in `go test`
+# could push to main. This is what Scorecard's Token-Permissions check is
+# looking for, and it is worth having on its own terms.
+permissions:
+  contents: read
+
 jobs:
   # Fail the build if go.sum
   # integrity is off, or if vendor/ has drifted from go.mod/go.sum (e.g. the dep
@@ -38,7 +49,7 @@ jobs:
           fetch-depth: 0 # full history + tags so `git describe` works
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.22"
+          go-version-file: go.mod # as in `vendor`: one source of truth
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
@@ -62,7 +73,7 @@ jobs:
           fetch-depth: 0 # tags needed for version stamping
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.22"
+          go-version-file: go.mod # as in `vendor`: one source of truth
 
       - name: derive version
         id: ver
@@ -76,10 +87,12 @@ jobs:
           echo "Building $VERSION ($COMMIT)"
 
       - name: install C toolchain (external linker → PIE + full RELRO)
+        env:
+          GOARCH_MATRIX: ${{ matrix.goarch }}
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc binutils
-          if [ "${{ matrix.goarch }}" = "arm64" ]; then
+          if [ "$GOARCH_MATRIX" = "arm64" ]; then
             sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           fi
 
@@ -96,18 +109,23 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
           PKG: github.com/manticore-projects/aurscan/internal/version
+          BUILD_VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_COMMIT: ${{ steps.ver.outputs.commit }}
+          BUILD_DATE: ${{ steps.ver.outputs.date }}
         run: |
           go build -trimpath -buildmode=pie -tags 'netgo osusergo' \
             -ldflags="-s -w -linkmode=external \
               -extldflags '-static-pie -Wl,-z,relro -Wl,-z,now' \
-              -X ${PKG}.Version=${{ steps.ver.outputs.version }} \
-              -X ${PKG}.Commit=${{ steps.ver.outputs.commit }} \
-              -X ${PKG}.Date=${{ steps.ver.outputs.date }}" \
-            -o aurscan-linux-${{ matrix.goarch }} ./cmd/aurscan
+              -X ${PKG}.Version=${BUILD_VERSION} \
+              -X ${PKG}.Commit=${BUILD_COMMIT} \
+              -X ${PKG}.Date=${BUILD_DATE}" \
+            -o "aurscan-linux-${GOARCH}" ./cmd/aurscan
 
       - name: verify hardening (PIE + full RELRO + static)
+        env:
+          GOARCH_MATRIX: ${{ matrix.goarch }}
         run: |
-          bin=aurscan-linux-${{ matrix.goarch }}
+          bin="aurscan-linux-${GOARCH_MATRIX}"
           readelf -h "$bin" | grep -q 'DYN (Position-Independent' || { echo "::error::$bin is not PIE (ET_DYN)"; exit 1; }
           readelf -d "$bin" | grep -qi 'BIND_NOW'               || { echo "::error::$bin lacks full RELRO (no BIND_NOW)"; exit 1; }
           file "$bin" | grep -q 'static-pie'                    || { echo "::error::$bin is not static-pie"; exit 1; }
@@ -154,6 +172,7 @@ jobs:
       - name: import signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
             echo "::error::GPG_PRIVATE_KEY secret is not set"; exit 1
@@ -179,7 +198,7 @@ jobs:
           # Resolve the signing key. If GPG_KEY_ID is set it must match an
           # imported secret key; otherwise auto-derive the first secret key's
           # primary fingerprint (gpg then auto-selects its signing subkey).
-          want='${{ secrets.GPG_KEY_ID }}'
+          want="$GPG_KEY_ID"
           if [ -n "$want" ]; then
             if ! gpg --list-secret-keys --with-colons | grep -qiE ":(${want#0x}):"; then
               echo "::error::GPG_KEY_ID ($want) does not match any imported secret key (see list above)."

@@ -1,0 +1,64 @@
+name: codeql
+
+# Static analysis of aurscan's own Go code.
+#
+# The irony is not lost: a tool that tells people their build scripts are unsafe
+# had no static analysis of its own beyond `go vet`. CodeQL's Go queries cover
+# the things vet does not — tainted input reaching a command or a file path,
+# unhandled error paths that skip a check, TLS and crypto misuse.
+#
+# Runs on pull requests too, unlike the Scorecard workflow, because that is
+# where the finding is cheap to act on. Scorecard's SAST check specifically
+# looks for analysis on PRs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so the queries themselves getting better still surfaces findings
+    # in code that has not changed. Saturday 05:00 UTC, after the scorecard run.
+    - cron: "0 5 * * 6"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze go
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+
+      - name: initialise codeql
+        uses: github/codeql-action/init@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3
+        with:
+          languages: go
+          # security-extended adds the lower-precision queries. On a codebase
+          # this size the extra noise is manageable and the point of running it
+          # at all is to catch what vet cannot.
+          queries: security-extended
+
+      # Explicit build rather than autobuild: the module is vendored, and
+      # autobuild has a habit of trying to fetch. -mod=vendor keeps it offline
+      # and analysing exactly what ships.
+      - name: build
+        run: go build -mod=vendor ./...
+
+      - name: analyse
+        uses: github/codeql-action/analyze@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3
+        with:
+          category: "/language:go"
