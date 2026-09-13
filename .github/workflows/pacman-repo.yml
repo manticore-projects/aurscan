@@ -19,10 +19,13 @@ on:
         description: 'Version to package, e.g. 0.7.1 (default: this repo state)'
         required: false
 
+# Read-only by default. The write grants that used to sit here applied to every
+# job in the file; they now sit on the two jobs that need them — `build` pushes
+# the synced PKGBUILDs, `deploy` publishes to Pages. A top-level write grant is
+# also what keeps Scorecard's Token-Permissions check at zero for the whole
+# repository, however careful the other workflows are.
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: pacman-repo
@@ -34,6 +37,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      # The "commit the synced PKGBUILDs" step pushes to the default branch.
+      contents: write
     container:
       image: archlinux:base-devel
     outputs:
@@ -42,6 +48,8 @@ jobs:
       - name: install tooling
         run: pacman -Syu --needed --noconfirm git
 
+      # persist-credentials stays at its default (true) here, unlike the other
+      # workflows: this job pushes, and the checkout token is how it does that.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: create build user
@@ -54,9 +62,20 @@ jobs:
 
       - name: sync PKGBUILDs to the release
         id: sync
+        env:
+          # Via env, not interpolated into the script. workflow_dispatch input
+          # is supplied by whoever triggers the run, and a tag name is a string
+          # a maintainer chooses — neither should be pasted into a shell.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          ver='${{ github.event.inputs.version || github.event.release.tag_name }}'
+          ver="${INPUT_VERSION:-$RELEASE_TAG}"
           if [ -n "$ver" ]; then
+            # Refuse anything that is not a plain version. sync-release.sh
+            # interpolates this into URLs and filenames.
+            case "${ver#v}" in
+              *[!0-9.]*|'') echo "::error::bad version: $ver"; exit 1 ;;
+            esac
             chmod +x packaging/sync-release.sh
             ./packaging/sync-release.sh "${ver#v}"
           fi
@@ -67,6 +86,7 @@ jobs:
       - name: import signing key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
             echo "::error::GPG_PRIVATE_KEY secret is not set"; exit 1
@@ -81,7 +101,7 @@ jobs:
             echo "::error::GPG_PRIVATE_KEY imported no secret key"; exit 1
           fi
 
-          want='${{ secrets.GPG_KEY_ID }}'
+          want="$GPG_KEY_ID"
           if [ -n "$want" ]; then
             key="$want"
           else
@@ -181,12 +201,14 @@ jobs:
 
       - name: commit the synced PKGBUILDs
         if: github.event_name == 'release'
+        env:
+          PKGVER: ${{ steps.sync.outputs.pkgver }}
         run: |
           if ! git diff --quiet -- packaging; then
             git config user.name  'github-actions[bot]'
             git config user.email 'github-actions[bot]@users.noreply.github.com'
             git add packaging
-            git commit -m "packaging: sync PKGBUILDs to v${{ steps.sync.outputs.pkgver }}"
+            git commit -m "packaging: sync PKGBUILDs to v${PKGVER}"
             git push origin HEAD:"${GITHUB_REF_NAME}" || \
               git push origin HEAD:main
           fi
@@ -198,6 +220,12 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      # Pages deployment needs both: the write grant to publish, and the OIDC
+      # token that actions/deploy-pages exchanges for it.
+      pages: write
+      id-token: write
+      contents: read
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

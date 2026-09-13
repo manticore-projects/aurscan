@@ -19,14 +19,27 @@ name: scorecard
 #     which is both correct and what Scorecard's own Pinned-Dependencies check
 #     asks for.
 #
-# Expect the first score to be mediocre. Scorecard measures things this project
-# has not done rather than things it has done badly, and it will fail loudest on
-# Pinned-Dependencies (ci.yml and pacman-repo.yml still pin actions by tag —
-# `pinact run` fixes both), Branch-Protection (needs a PAT to even read, and the
-# setting has to exist), and Signed-Releases (release assets carry a detached
-# GPG signature, which Scorecard does not recognise; it looks for cosign or an
-# .asc alongside each asset). Fix them because they are worth fixing, not
-# because the number moved.
+# Scorecard measures things this project has not done rather than things it has
+# done badly, so read a low check as a gap, not an accusation.
+#
+# Where the remaining zeros come from, as of the 2026-09-13 run:
+#   * Branch-Protection — the setting has to exist AND Scorecard has to be able
+#     to read it. Without a PAT this scores 0, not "skipped"; see repo_token
+#     below. The tiers that require approving reviews are unreachable with a
+#     single maintainer, so ~6 is the realistic ceiling here.
+#   * Code-Review — every change would have to go through a reviewed PR.
+#     Deliberately not chased: a self-approved PR history is worse evidence of
+#     review than an honest zero.
+#   * CII-Best-Practices — a self-certification questionnaire at
+#     bestpractices.dev. Achievable, just unstarted.
+#   * Packaging — wants publication to a registry Scorecard recognises. A
+#     self-hosted signed pacman repository is not on that list. Note that an
+#     unscored check is excluded from the average entirely, so "fixing" this by
+#     publishing a container nobody asked for can lower the score rather than
+#     raise it.
+#
+# Things previously listed here that turned out to be fine: Pinned-Dependencies
+# scores 10, and Signed-Releases credits the detached .asc on SHA256SUMS at 8.
 
 on:
   # Re-score weekly so the badge reflects the repository as it is now, not as it
@@ -68,8 +81,9 @@ jobs:
           # REST API work. Public repositories only.
           publish_results: true
           # A classic PAT with `public_repo` scope is the only way Scorecard can
-          # read branch-protection settings; without it that one check is
-          # skipped rather than failed. Add the secret and uncomment to enable.
+          # read branch-protection settings. Without it the check scores 0
+          # outright — it is not skipped, which is what the earlier note here
+          # claimed. Add the secret and uncomment to enable.
           # repo_token: ${{ secrets.SCORECARD_TOKEN }}
 
       # Kept for debugging a score that moved unexpectedly. Artifacts expire on

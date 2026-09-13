@@ -29,16 +29,6 @@ feat(scan): report masqueraded file types
 docs(readme): correct the context cap
 ```
 
-## The project is maintained by one person
-
-There is no review queue and no second pair of eyes. That is worth knowing
-before you invest in a large change: open an issue describing the approach
-first, and get a reaction, rather than arriving with a finished branch.
-
-It also means changes land on `main` without a reviewer, which is why the gates
-below are mechanical rather than social. The corpus run, not a reviewer, is what
-stops a bad rule reaching users.
-
 ## Changing detection rules
 
 This is where most of the care goes, because a rule that fires wrongly is worse
