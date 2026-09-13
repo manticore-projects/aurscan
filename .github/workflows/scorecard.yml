@@ -84,7 +84,7 @@ jobs:
           # read branch-protection settings. Without it the check scores 0
           # outright — it is not skipped, which is what the earlier note here
           # claimed. Add the secret and uncomment to enable.
-          # repo_token: ${{ secrets.SCORECARD_TOKEN }}
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
 
       # Kept for debugging a score that moved unexpectedly. Artifacts expire on
       # their own; the SARIF upload below is the durable record.
