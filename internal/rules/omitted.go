@@ -29,6 +29,28 @@ package rules
 // every collector rejects non-text input via isTexty before this point.
 const OmittedContent = "\x00aurscan:omitted"
 
-// IsOmitted reports whether a file's content is the omission marker rather than
-// the file itself.
-func IsOmitted(content string) bool { return content == OmittedContent }
+// ArtifactContent marks a file that sits in a local BUILD DIRECTORY because
+// makepkg put it there — a remote source=() download, or a package makepkg
+// built — rather than because the AUR repository contains it.
+//
+// It is a separate marker, not a flavour of OmittedContent, because the two
+// say opposite things to the auditor. "Present but not supplied" means the
+// repository holds a file nobody reviewed, which is a gap in the review. A
+// downloaded release tarball is not in the repository at all: listing it under
+// that heading made the model report jbr_jcef-….tar.gz as "present in the
+// repository", a false statement about the package that no AUR snapshot of it
+// would ever support.
+//
+// IsOmitted is true for it as well, so every content rule skips it exactly as
+// it skips an omitted file. Only the prompt tells the two apart.
+const ArtifactContent = "\x00aurscan:artifact"
+
+// IsOmitted reports whether a file's content is a marker rather than the file
+// itself — either an omission or a makepkg artifact.
+func IsOmitted(content string) bool {
+	return content == OmittedContent || content == ArtifactContent
+}
+
+// IsArtifact reports whether a file was recorded as a makepkg artifact (a
+// downloaded source or a built package) rather than a repository file.
+func IsArtifact(content string) bool { return content == ArtifactContent }

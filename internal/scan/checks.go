@@ -80,7 +80,7 @@ var checkCatalog = map[string]checkDef{
 	// config reaches the careful user first. An AUR repository is build scripts:
 	// it has no editor project, no dev container and no direnv environment, so
 	// no legitimate form exists.
-	"editor_exec_trigger": {"critical", "A file in the package repository causes a command to run on directory entry or project open (.envrc, a VS Code folderOpen task, an editor project rc, a devcontainer lifecycle hook, an auto-start run configuration) — this executes before any build, on whoever reviews the package"},
+	"editor_exec_trigger": {"critical", "A file in the package repository causes a command to run on directory entry or project open (.envrc, a VS Code folderOpen task, an editor project rc containing an execution primitive, a devcontainer lifecycle hook, an auto-start run configuration) — this executes before any build, on whoever reviews the package. NOT this: an rc that only sets options or enables an LSP server by name (editor_rc_inert)"},
 	// Narrow by design: it is text that is SCRIPT behind a binary name. A .jpg
 	// that is really a PNG is untidy, not hostile, and is not this check.
 	"masqueraded_file_type": {"critical", "A file whose name claims a magic-byte binary format (.woff2, .png, .so) contains executable script — the name places it where nobody reads it so that something else can run it"},
@@ -145,6 +145,14 @@ var checkCatalog = map[string]checkDef{
 	// model could only report the warning, which fires on essentially every
 	// Electron, Node and Rust package in the AUR and blocks the build — the same
 	// ecosystem-wide false positive build_cache_unconfined was demoted for.
+	// The inert twin of editor_exec_trigger for project rc files. A .nvim.lua
+	// that only sets options or enables an already-installed LSP server by
+	// name is maintainer tooling that leaked into the repository: untidy, and
+	// the maintainer should drop it, but nothing in it runs anything the
+	// reviewer did not already install, and current Neovim asks before
+	// trusting it at all. Warning tier would still block jre-jetbrains and
+	// every package like it for a hygiene issue.
+	"editor_rc_inert":         {"info", "An editor project rc (.nvim.lua, .exrc, .lvimrc) in the repository that contains no execution primitive — options, filetype settings, an LSP server enabled by name. Maintainer tooling left in the repo; hygiene, not a risk"},
 	"pkg_manager_deps_pinned": {"info", "npm/cargo/pip/go fetching THIS project's own dependencies, pinned to a lockfile (npm ci, cargo --locked/--frozen, --frozen-lockfile, pip --require-hashes, go.sum) — resolved before the build, not during it"},
 	"note":                    {"info", "Auditor note (not itself a risk)"},
 }
@@ -194,6 +202,7 @@ var checkLabel = map[string]string{
 	"build_cache_unconfined":   "build cache written outside $srcdir",
 	"remote_source_unreviewed": "remote source archive not reviewed",
 	"pkg_manager_deps_pinned":  "fetches its own deps, lockfile-pinned",
+	"editor_rc_inert":          "inert editor rc left in the repository",
 	"note":                     "note",
 }
 
@@ -326,9 +335,9 @@ func resolveHedges(checks []Check) []Check {
 // the same file, and the model quotes a different line for each (the folderOpen
 // property for the armed form, the first line for the presence observation), so
 // an evidence match would never fire.
-var armedTwin = map[string]string{
-	"editor_exec_trigger":   "editor_config_present",
-	"masqueraded_file_type": "file_type_mismatch",
+var armedTwin = map[string][]string{
+	"editor_exec_trigger":   {"editor_config_present", "editor_rc_inert"},
+	"masqueraded_file_type": {"file_type_mismatch"},
 }
 
 // resolveArmedTwins drops the unarmed warning when the armed critical was
@@ -349,10 +358,11 @@ func resolveArmedTwins(checks []Check) []Check {
 	out := make([]Check, 0, len(checks))
 	for _, c := range checks {
 		drop := false
-		for crit, warn := range armedTwin {
-			if c.ID == warn && c.Triggered && armed[crit+"\x00"+c.File] {
-				drop = true
-				break
+		for crit, twins := range armedTwin {
+			for _, twin := range twins {
+				if c.ID == twin && c.Triggered && armed[crit+"\x00"+c.File] {
+					drop = true
+				}
 			}
 		}
 		if !drop {

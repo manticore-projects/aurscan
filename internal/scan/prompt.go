@@ -152,15 +152,28 @@ CRITICAL checks (a genuine hit means the package is malicious):
 - editor_exec_trigger — a file in the package repository that causes a command
   to run on directory entry or project open, before any build: a .envrc
   (direnv), a .vscode/tasks.json task with "runOn": "folderOpen", an editor
-  project rc (.exrc, .nvim.lua, .lvimrc), a .devcontainer lifecycle command
-  (postCreateCommand and friends), an auto-starting JetBrains run
-  configuration, or a .vscode/settings.json key that redirects an executable
-  path or the terminal environment. The victim is whoever REVIEWS the package:
-  the AUR workflow opens the checkout in an editor before the user decides.
-  An AUR repository is build scripts — it has no editor project, no dev
-  container and no direnv environment — so none of these has a legitimate form
-  here. NOT this: editor config that only defines tasks without arming them
-  (use editor_config_present), and .editorconfig, which is inert.
+  project rc (.exrc, .nvim.lua, .lvimrc) that CONTAINS AN EXECUTION PRIMITIVE,
+  a .devcontainer lifecycle command (postCreateCommand and friends), an
+  auto-starting JetBrains run configuration, or a .vscode/settings.json key
+  that redirects an executable path or the terminal environment. The victim is
+  whoever REVIEWS the package: the AUR workflow opens the checkout in an
+  editor before the user decides. An AUR repository is build scripts, so none
+  of these ARMED forms has a legitimate form here.
+  For a project rc, judge the CONTENT, not the file name. Armed means: a shell
+  escape (:!, system(), jobstart, termopen, vim.fn.system, vim.system,
+  os.execute, io.popen), :source/:luafile/:lua/:execute/:terminal of anything,
+  dynamic code (load, loadstring, dofile, string.char/escape-encoded strings,
+  bytecode, require of a module shipped IN THE REPOSITORY), a tool definition
+  carrying its own command (vim.lsp.config/start with cmd=, lspconfig setup
+  with cmd=), an option that decides which binary later runs (shell, makeprg,
+  grepprg, runtimepath, $PATH), or a computed vim.cmd argument. Also weigh:
+  Neovim >= 0.9 does not load an exrc until the user trusts it at a prompt, so
+  "runs without consent" is only true of plain Vim with 'exrc' set.
+  NOT this: editor config that only defines tasks without arming them (use
+  editor_config_present); a project rc that only sets options or filetypes, or
+  enables an LSP server BY NAME (vim.lsp.enable) that the user must already
+  have installed — that is maintainer tooling left in the repo (use
+  editor_rc_inert); and .editorconfig, which is inert.
 - masqueraded_file_type — a file whose name claims a magic-byte binary format
   (.woff2, .ttf, .png, .so, .zip) whose contents are executable script: a
   shebang, shell, JavaScript or Python. The name puts it where nobody opens it
@@ -265,6 +278,7 @@ code. Report the critical id when that is true and the warning id otherwise,
 never both for the same file:
 
   editor_exec_trigger    over  editor_config_present
+  editor_exec_trigger    over  editor_rc_inert
   masqueraded_file_type  over  file_type_mismatch
 
 A note on the critical tier: one critical check means MALICIOUS and blocks the
@@ -294,12 +308,21 @@ INFO (recorded and shown, but never a reason to block a build):
 - remote_source_unreviewed — a source=() entry downloads an archive (sdist,
   release tarball, zip, wheel, crate) whose contents you cannot see. Report it
   ONCE PER PACKAGE, not once per file, and name the archives in that one note.
+  An archive listed under MAKEPKG ARTIFACTS was downloaded into the build
+  directory by makepkg: it is not in the repository, so never say it is
+  "present in the repository" or "present but not supplied".
   It is info, not a warning: an AUR repository never contains upstream releases,
   so this is true of most Python, Go and Rust packages and blocking on it would
   block a whole ecosystem. Do not treat it as exculpatory either — the checksum
   proves the archive matches what the packager pinned, not that what they pinned
   is safe, and a Python sdist's setup.py runs as the building user. Say plainly
   that the archive's build hooks were not reviewed.
+- editor_rc_inert — an editor project rc (.nvim.lua, .exrc, .lvimrc) in the
+  repository that contains NO execution primitive: options, filetype settings,
+  vim.lsp.enable of a server by name. Report it so the maintainer can remove
+  it; do not call it an attack surface, and do not describe it as running
+  anything. If you can point at a line that executes, it is
+  editor_exec_trigger instead — never both for the same file.
 - note — anything worth recording that is not itself a risk.
 
 Each check's "note" is the ONLY text about that specific instance the user

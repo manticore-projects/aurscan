@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Editor project rc files are judged by content, not by name.** `EDITOR-003`
+  fired critical and non-overridable on any `.nvim.lua`/`.exrc`/`.lvimrc`,
+  which blocked `jre-jetbrains` for a one-line `vim.lsp.enable
+  { 'termux_language_server' }` — an LSP server *for PKGBUILDs*, enabled by
+  name, that the reviewer must already have installed. `EDITOR-003` now fires
+  only when the rc contains an execution primitive (shell escape, `system()`/
+  `jobstart`/`vim.system`/`os.execute`/`io.popen`, `:source`/`:lua`/`:execute`,
+  dynamic or encoded code, `require` of a module shipped in the repo, a tool
+  definition with its own `cmd=`, a `shell`/`makeprg`/`runtimepath`/`$PATH`
+  redirect, a computed `vim.cmd`) or is unreadable as text. An rc with none of
+  these is `EDITOR-008` → `editor_rc_inert` (info). The auditor prompt now also
+  notes that Neovim ≥ 0.9 prompts before trusting an exrc.
+- **Downloaded sources are no longer reported as repository files.** Scanning a
+  local build directory after makepkg had fetched `source=()` listed the release
+  tarball under "FILES PRESENT BUT NOT SUPPLIED", and the model duly reported it
+  as "present in the repository". `CollectDir` now resolves the remote
+  `source=()` filenames (makepkg's `name::url` / basename rules, variables
+  substituted) and marks an unreadable top-level match, plus makepkg's own output
+  (`*.pkg.tar.*`, `*.src.tar.*`, `--log` files), as a makepkg artifact. The
+  prompt lists these in a separate section stating they are not part of the
+  repository. AUR snapshots are unaffected: a same-named file there was committed
+  and stays an unreviewed repository file. Cache version bumped to `v11`.
+
 ## [0.9.1] - 2026-09-13
 
 ### Added

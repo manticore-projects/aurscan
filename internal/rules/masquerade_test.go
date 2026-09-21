@@ -81,25 +81,20 @@ func TestEtherHidingShapeInAnAURRepo(t *testing.T) {
 	}
 }
 
-func TestDirenvAndEditorRcAreCriticalOnPresence(t *testing.T) {
-	for _, name := range []string{".envrc", ".exrc", ".nvim.lua", ".lvimrc"} {
-		files := map[string]string{"PKGBUILD": minimalPKGBUILD, name: "export PATH=/tmp/x:$PATH\n"}
-		hits := Scan(files)
-		found := false
-		for _, h := range hits {
-			if strings.HasPrefix(h.Code, "EDITOR-") && h.File == name {
-				found = true
-				if h.Severity != Critical {
-					t.Errorf("%s: severity %q, want critical", name, h.Severity)
-				}
-			}
-		}
-		if !found {
-			t.Errorf("%s present in an AUR repo produced no EDITOR finding", name)
-		}
-		if got := Floor(hits, false); got != "MALICIOUS" {
-			t.Errorf("%s: floor = %q, want MALICIOUS", name, got)
-		}
+// .envrc is shell by definition, so its presence alone is the finding. Editor
+// project rc files are judged by content: see editorrc_test.go.
+func TestDirenvIsCriticalOnPresence(t *testing.T) {
+	files := map[string]string{"PKGBUILD": minimalPKGBUILD, ".envrc": "export PATH=/tmp/x:$PATH\n"}
+	hits := Scan(files)
+	h, ok := hitCodes(hits)["EDITOR-002"]
+	if !ok {
+		t.Fatal(".envrc present in an AUR repo produced no EDITOR-002")
+	}
+	if h.Severity != Critical {
+		t.Errorf("severity %q, want critical", h.Severity)
+	}
+	if got := Floor(hits, false); got != "MALICIOUS" {
+		t.Errorf("floor = %q, want MALICIOUS", got)
 	}
 }
 
@@ -216,7 +211,7 @@ func TestShellScriptBehindASharedObjectName(t *testing.T) {
 func TestNewCodesMapToCheckIDs(t *testing.T) {
 	for _, code := range []string{
 		"EDITOR-001", "EDITOR-002", "EDITOR-003", "EDITOR-004",
-		"EDITOR-005", "EDITOR-006", "EDITOR-007", "MASQ-001", "MASQ-002",
+		"EDITOR-005", "EDITOR-006", "EDITOR-007", "EDITOR-008", "MASQ-001", "MASQ-002",
 	} {
 		id, ok := checkIDFor[code]
 		if !ok {

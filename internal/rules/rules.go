@@ -782,8 +782,10 @@ var fatalCodes = map[string]bool{
 	// Execution on directory entry / project open. An AUR repository is build
 	// scripts: it has no editor project, no dev container and no direnv
 	// environment, so there is no legitimate form of any of these. The armed
-	// forms only — EDITOR-007 (unarmed task definitions) is a warning and is
-	// deliberately absent, as is MASQ-002.
+	// forms only — EDITOR-007 (unarmed task definitions) is a warning and
+	// EDITOR-008 (an editor rc with no execution primitive) is info; both are
+	// deliberately absent, as is MASQ-002. EDITOR-003 fires only on an rc that
+	// can execute something (editorrc.go), never on the file name alone.
 	"EDITOR-001": true, "EDITOR-002": true, "EDITOR-003": true,
 	"EDITOR-004": true, "EDITOR-005": true, "EDITOR-006": true,
 	// A file named as a binary format holding executable script. The only
@@ -924,6 +926,7 @@ var checkIDFor = map[string]string{
 	"EDITOR-005": "editor_exec_trigger",
 	"EDITOR-006": "editor_exec_trigger",
 	"EDITOR-007": "editor_config_present",
+	"EDITOR-008": "editor_rc_inert",
 	// a file whose name claims a binary format and whose contents are text
 	"MASQ-001": "masqueraded_file_type",
 	"MASQ-002": "file_type_mismatch",

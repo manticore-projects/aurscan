@@ -223,11 +223,14 @@ func buildPrompt(pkg string, files Files, sig Signals) string {
 	// apart from "I was not given the install scriptlet" — a distinction the
 	// PKGBUILD alone cannot express, because the only link between a PKGBUILD
 	// and its scriptlet is a filename string in install=.
-	var supplied, omitted []string
+	var supplied, omitted, artifacts []string
 	for _, n := range names {
-		if rules.IsOmitted(files[n]) {
+		switch {
+		case rules.IsArtifact(files[n]):
+			artifacts = append(artifacts, n)
+		case rules.IsOmitted(files[n]):
 			omitted = append(omitted, n)
-		} else {
+		default:
 			supplied = append(supplied, n)
 		}
 	}
@@ -249,6 +252,21 @@ func buildPrompt(pkg string, files Files, sig Signals) string {
 	} else {
 		sb.WriteString("Every file in the package is listed above. Any file referenced by the\n" +
 			"package but absent from this list was NOT reviewed.\n")
+	}
+	if len(artifacts) > 0 {
+		// Kept separate from the omitted list: these are NOT in the repository,
+		// and describing them as if they were is a false statement about the
+		// package (a downloaded release tarball reported as "present in the
+		// repository").
+		fmt.Fprintf(&sb, "\n----- MAKEPKG ARTIFACTS IN THE BUILD DIRECTORY (trusted, %d) -----\n", len(artifacts))
+		for _, n := range artifacts {
+			fmt.Fprintf(&sb, "  %s\n", n)
+		}
+		sb.WriteString("These are NOT part of the AUR repository: they are remote source=()\n" +
+			"downloads or makepkg's own output, left in the local build directory. Their\n" +
+			"contents were not reviewed. A remote archive among them is covered by\n" +
+			"remote_source_unreviewed (info), never incomplete_scan. Do not describe any\n" +
+			"of them as present in, committed to, or shipped by the repository.\n")
 	}
 
 	sb.WriteString("\n===== BEGIN UNTRUSTED PACKAGE FILES =====\n")
@@ -490,7 +508,41 @@ func CollectDir(dir string) (Files, error) {
 	if c, ok := files["PKGBUILD"]; !ok || rules.IsOmitted(c) {
 		return nil, fmt.Errorf("no readable PKGBUILD found in %s", dir)
 	}
+	markBuildArtifacts(files)
 	return files, nil
+}
+
+// markBuildArtifacts relabels the files makepkg left in a build directory —
+// downloaded remote sources and its own output — as artifacts rather than
+// repository files the scanner failed to read.
+//
+// Only CollectDir needs this. An AUR snapshot (FetchSnapshot) is the
+// repository and nothing else, so a file there that happens to share a remote
+// source's name was COMMITTED, and must stay reported as an unreviewed
+// repository file.
+//
+// Two deliberate limits:
+//
+//   - Top-level names only. makepkg downloads into $startdir itself; a
+//     same-named file in a subdirectory is not a download.
+//   - A downloaded source that IS text stays supplied. Reviewing a remote
+//     patch or helper script is strictly more coverage than not, so it is
+//     never hidden; only an unreadable one (a release tarball) is relabelled,
+//     and that relabelling changes how it is described, not whether it is
+//     listed.
+func markBuildArtifacts(files Files) {
+	downloads := rules.DownloadedSourceNames(files["PKGBUILD"])
+	for rel, content := range files {
+		if strings.ContainsAny(rel, `/\`) {
+			continue
+		}
+		switch {
+		case rules.IsMakepkgOutput(rel):
+			files[rel] = rules.ArtifactContent
+		case downloads[rel] && content == rules.OmittedContent:
+			files[rel] = rules.ArtifactContent
+		}
+	}
 }
 
 // CollectFile reads a single PKGBUILD file directly (issue #18). The content is

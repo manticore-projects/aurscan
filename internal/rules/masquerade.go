@@ -64,7 +64,9 @@ var vscodeExecHijack = regexp.MustCompile(
 var ideaAutoRun = regexp.MustCompile(`(?is)(activateToolWindowBeforeRun|RunOnceActivity|<option\s+name="autoStart"\s+value="true")`)
 
 // editorTriggers is the catalog of directory-entry and project-open execution
-// vectors. An AUR repository contains build scripts. It has no editor project,
+// vectors. Editor project rc files (EDITOR-003/EDITOR-008) are not in this
+// table: whether one is armed depends on what it calls, which a single regexp
+// cannot decide — see checkEditorRC. An AUR repository contains build scripts. It has no editor project,
 // no dev container and no direnv environment, so none of these has a benign form
 // here — which is why the armed ones are fatal (see fatalCodes).
 var editorTriggers = []editorTrigger{
@@ -83,19 +85,6 @@ var editorTriggers = []editorTrigger{
 		code:  "EDITOR-002",
 		name:  "direnv .envrc executes on directory entry",
 		match: func(rel, base string) bool { return base == ".envrc" },
-	},
-	{
-		// exrc/nvim.lua are read on startup in the directory for anyone who has
-		// enabled 'exrc'. Arbitrary vimscript or Lua, no prompt.
-		code: "EDITOR-003",
-		name: "editor project rc executes on open",
-		match: func(rel, base string) bool {
-			switch base {
-			case ".exrc", ".nvim.lua", ".nvimrc", ".lvimrc", ".vimrc", ".editorconfig-lua":
-				return true
-			}
-			return false
-		},
 	},
 	{
 		code: "EDITOR-004",
@@ -178,6 +167,7 @@ func checkEditorTriggers(files map[string]string, add func(code, name string, se
 			add(t.code, t.name, sev, rel, firstMeaningfulLine(text))
 		}
 	}
+	checkEditorRC(files, add)
 }
 
 // clean normalises a repo-relative path for matching: forward slashes, no
