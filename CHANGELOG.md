@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-21
+
 ### Fixed
 - **Editor project rc files are judged by content, not by name.** `EDITOR-003`
   fired critical and non-overridable on any `.nvim.lua`/`.exrc`/`.lvimrc`,
@@ -30,6 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt lists these in a separate section stating they are not part of the
   repository. AUR snapshots are unaffected: a same-named file there was committed
   and stays an unreviewed repository file. Cache version bumped to `v11`.
+
+### Security
+- Release pipeline hardening: every workflow action pinned to a commit SHA,
+  `contents: write` scoped to the jobs that need it, and no `${{ }}`
+  interpolation into shell in `pacman-repo.yml`.
+- CodeQL analysis, Dependabot (Go modules and GitHub Actions), and a fuzz
+  target for the rule engine (`internal/rules/fuzz_test.go`).
+- OpenSSF Scorecard analysis; the README badge now reports it.
+- `SECURITY.md` (private vulnerability reporting) and `CONTRIBUTING.md`.
 
 ## [0.9.1] - 2026-09-13
 
@@ -1050,7 +1061,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/manticore-projects/aurscan/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/manticore-projects/aurscan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/manticore-projects/aurscan/compare/v0.8.4...v0.8.5
