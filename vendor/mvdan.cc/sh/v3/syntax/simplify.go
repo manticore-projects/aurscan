@@ -3,7 +3,7 @@
 
 package syntax
 
-import "bytes"
+import "strings"
 
 // Simplify modifies a node to remove redundant pieces of syntax, and returns
 // whether any changes were made.
@@ -17,75 +17,105 @@ import "bytes"
 //	Merge negations with unary operators     [[ ! -n $var ]]
 //	Use single quotes to shorten literals    "\$foo"
 func Simplify(n Node) bool {
-	s := simplifier{}
-	Walk(n, s.visit)
+	s := simplifier{keepParams: make(map[ArithmExpr]bool)}
+	for node := range Preorder(n) {
+		s.visit(node)
+	}
 	return s.modified
 }
 
 type simplifier struct {
 	modified bool
+
+	// keepParams holds arithmetic nodes within an array index;
+	// see [simplifier.markIndex].
+	keepParams map[ArithmExpr]bool
 }
 
-func (s *simplifier) visit(node Node) bool {
-	switch x := node.(type) {
-	case *Assign:
-		x.Index = s.removeParensArithm(x.Index)
-		// Don't inline params, as x[i] and x[$i] mean
-		// different things when x is an associative
-		// array; the first means "i", the second "$i".
-	case *ParamExp:
-		x.Index = s.removeParensArithm(x.Index)
-		// don't inline params - same as above.
+// markIndex records an array index so that its parameters are not inlined,
+// as x[i] and x[$i] differ when x is an associative array.
+// Nested arithmetic expansions like x[$((i))] are left out,
+// as those are always arithmetic and never string keys.
+func (s *simplifier) markIndex(expr ArithmExpr) {
+	switch expr := expr.(type) {
+	case *BinaryArithm:
+		s.keepParams[expr] = true
+		s.markIndex(expr.X)
+		s.markIndex(expr.Y)
+	case *ParenArithm:
+		s.keepParams[expr] = true
+		s.markIndex(expr.X)
+	case *UnaryArithm:
+		// visit never inlines the parameters of a unary expression.
+		s.markIndex(expr.X)
+	}
+}
 
-		if x.Slice == nil {
+func (s *simplifier) visit(node Node) {
+	switch node := node.(type) {
+	case *Assign:
+		node.Index = s.removeParensArithm(node.Index)
+		s.markIndex(node.Index)
+	case *ArrayElem:
+		s.markIndex(node.Index)
+	case *ParamExp:
+		node.Index = s.removeParensArithm(node.Index)
+		s.markIndex(node.Index)
+
+		if node.Slice == nil {
 			break
 		}
-		x.Slice.Offset = s.removeParensArithm(x.Slice.Offset)
-		x.Slice.Offset = s.inlineSimpleParams(x.Slice.Offset)
-		x.Slice.Length = s.removeParensArithm(x.Slice.Length)
-		x.Slice.Length = s.inlineSimpleParams(x.Slice.Length)
+		node.Slice.Offset = s.removeParensArithm(node.Slice.Offset)
+		node.Slice.Offset = s.inlineSimpleParams(node.Slice.Offset)
+		node.Slice.Length = s.removeParensArithm(node.Slice.Length)
+		node.Slice.Length = s.inlineSimpleParams(node.Slice.Length)
 	case *ArithmExp:
-		x.X = s.removeParensArithm(x.X)
-		x.X = s.inlineSimpleParams(x.X)
+		node.X = s.removeParensArithm(node.X)
+		node.X = s.inlineSimpleParams(node.X)
 	case *ArithmCmd:
-		x.X = s.removeParensArithm(x.X)
-		x.X = s.inlineSimpleParams(x.X)
+		node.X = s.removeParensArithm(node.X)
+		node.X = s.inlineSimpleParams(node.X)
 	case *ParenArithm:
-		x.X = s.removeParensArithm(x.X)
-		x.X = s.inlineSimpleParams(x.X)
-	case *BinaryArithm:
-		x.X = s.inlineSimpleParams(x.X)
-		x.Y = s.inlineSimpleParams(x.Y)
-	case *CmdSubst:
-		x.Stmts = s.inlineSubshell(x.Stmts)
-	case *Subshell:
-		x.Stmts = s.inlineSubshell(x.Stmts)
-	case *Word:
-		x.Parts = s.simplifyWord(x.Parts)
-	case *TestClause:
-		x.X = s.removeParensTest(x.X)
-		x.X = s.removeNegateTest(x.X)
-	case *ParenTest:
-		x.X = s.removeParensTest(x.X)
-		x.X = s.removeNegateTest(x.X)
-	case *BinaryTest:
-		x.X = s.unquoteParams(x.X)
-		x.X = s.removeNegateTest(x.X)
-		if x.Op == TsMatchShort {
-			s.modified = true
-			x.Op = TsMatch
+		node.X = s.removeParensArithm(node.X)
+		if !s.keepParams[node] {
+			node.X = s.inlineSimpleParams(node.X)
 		}
-		switch x.Op {
+	case *BinaryArithm:
+		if !s.keepParams[node] {
+			node.X = s.inlineSimpleParams(node.X)
+			node.Y = s.inlineSimpleParams(node.Y)
+		}
+	case *CmdSubst:
+		node.Stmts = s.inlineSubshell(node.Stmts)
+	case *Subshell:
+		node.Stmts = s.inlineSubshell(node.Stmts)
+	case *Word:
+		node.Parts = s.simplifyWord(node.Parts)
+	case *TestClause:
+		node.X = s.removeParensTest(node.X)
+		node.X = s.removeNegateTest(node.X)
+	case *ParenTest:
+		node.X = s.removeParensTest(node.X)
+		node.X = s.removeNegateTest(node.X)
+	case *BinaryTest:
+		node.X = s.unquoteParams(node.X)
+		node.X = s.removeNegateTest(node.X)
+		if node.Op == TsMatchShort {
+			s.modified = true
+			node.Op = TsMatch
+		}
+		switch node.Op {
 		case TsMatch, TsNoMatch:
 			// unquoting enables globbing
+		case TsReMatch:
+			// unquoting turns a literal string into a regular expression
 		default:
-			x.Y = s.unquoteParams(x.Y)
+			node.Y = s.unquoteParams(node.Y)
 		}
-		x.Y = s.removeNegateTest(x.Y)
+		node.Y = s.removeNegateTest(node.Y)
 	case *UnaryTest:
-		x.X = s.unquoteParams(x.X)
+		node.X = s.unquoteParams(node.X)
 	}
-	return true
 }
 
 func (s *simplifier) simplifyWord(wps []WordPart) []WordPart {
@@ -99,7 +129,7 @@ parts:
 		if lit == nil {
 			break
 		}
-		var buf bytes.Buffer
+		var sb strings.Builder
 		escaped := false
 		for _, r := range lit.Value {
 			switch r {
@@ -118,9 +148,9 @@ parts:
 				}
 				escaped = false
 			}
-			buf.WriteRune(r)
+			sb.WriteRune(r)
 		}
-		newVal := buf.String()
+		newVal := sb.String()
 		if newVal == lit.Value {
 			break
 		}
@@ -152,12 +182,11 @@ func (s *simplifier) inlineSimpleParams(x ArithmExpr) ArithmExpr {
 		return x
 	}
 	pe, _ := w.Parts[0].(*ParamExp)
-	if pe == nil || !ValidName(pe.Param.Value) {
-		// Not a parameter expansion, or not a valid name, like $3.
+	if pe == nil || pe.Param == nil || !ValidName(pe.Param.Value) {
+		// Not a POSIX-like parameter expansion, or not a valid name without `$`, like $3.
 		return x
 	}
-	if pe.Excl || pe.Length || pe.Width || pe.Slice != nil ||
-		pe.Repl != nil || pe.Exp != nil || pe.Index != nil {
+	if !pe.simple() {
 		// A complex parameter expansion can't be simplified.
 		//
 		// Note that index expressions can't generally be simplified
@@ -172,7 +201,7 @@ func (s *simplifier) inlineSimpleParams(x ArithmExpr) ArithmExpr {
 func (s *simplifier) inlineSubshell(stmts []*Stmt) []*Stmt {
 	for len(stmts) == 1 {
 		st := stmts[0]
-		if st.Negated || st.Background || st.Coprocess ||
+		if st.Negated || st.Background || st.Coprocess || st.Disown ||
 			len(st.Redirs) > 0 {
 			break
 		}

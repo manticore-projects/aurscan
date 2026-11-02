@@ -3,7 +3,11 @@
 
 package syntax
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+	"strings"
+)
 
 var (
 	litLeftBrace  = &Lit{Value: "{"}
@@ -12,10 +16,10 @@ var (
 	litRightBrace = &Lit{Value: "}"}
 )
 
-// SplitBraces parses brace expansions within a word's literal parts. If any
-// valid brace expansions are found, they are replaced with BraceExp nodes, and
-// the function returns true. Otherwise, the word is left untouched and the
-// function returns false.
+// SplitBraces parses brace expansions within a word's literal parts.
+// If any valid brace expansions are found, they are replaced with BraceExp nodes,
+// and the function returns true.
+// Otherwise, the word is left untouched and the function returns false.
 //
 // For example, a literal word "foo{bar,baz}" will result in a word containing
 // the literal "foo", and a brace expansion with the elements "bar" and "baz".
@@ -23,11 +27,17 @@ var (
 // It does not return an error; malformed brace expansions are simply skipped.
 // For example, the literal word "a{b" is left unchanged.
 func SplitBraces(word *Word) bool {
-	toSplit := false
+	if !slices.ContainsFunc(word.Parts, func(part WordPart) bool {
+		lit, ok := part.(*Lit)
+		return ok && strings.Contains(lit.Value, "{")
+	}) {
+		// In the common case where a word has no braces, skip any allocs.
+		return false
+	}
 	top := &Word{}
 	acc := top
 	var cur *BraceExp
-	open := []*BraceExp{}
+	var open []*BraceExp
 
 	pop := func() *BraceExp {
 		old := cur
@@ -62,6 +72,9 @@ func SplitBraces(word *Word) bool {
 				addLit(&l2)
 			}
 			switch lit.Value[j] {
+			case '\\':
+				j++
+				continue
 			case '{':
 				addlitidx()
 				acc = &Word{}
@@ -72,6 +85,18 @@ func SplitBraces(word *Word) bool {
 					continue
 				}
 				addlitidx()
+				if cur.Sequence {
+					// A comma inside a sequence like {1..2,3} makes it
+					// a list expansion where the ".." are literal.
+					merged := cur.Elems[0]
+					for _, elem := range cur.Elems[1:] {
+						merged.Parts = append(merged.Parts, litDots)
+						merged.Parts = append(merged.Parts, elem.Parts...)
+					}
+					cur.Sequence = false
+					cur.Elems = cur.Elems[:1]
+					cur.Elems[0] = merged
+				}
 				acc = &Word{}
 				cur.Elems = append(cur.Elems, acc)
 			case '.':
@@ -79,6 +104,10 @@ func SplitBraces(word *Word) bool {
 					continue
 				}
 				if j+1 >= len(lit.Value) || lit.Value[j+1] != '.' {
+					continue
+				}
+				if !cur.Sequence && len(cur.Elems) > 1 {
+					// ".." inside a list expansion like {1,2..3} is literal.
 					continue
 				}
 				addlitidx()
@@ -90,7 +119,6 @@ func SplitBraces(word *Word) bool {
 				if cur == nil {
 					continue
 				}
-				toSplit = true
 				addlitidx()
 				br := pop()
 				if len(br.Elems) == 1 {
@@ -108,10 +136,9 @@ func SplitBraces(word *Word) bool {
 				broken := false
 				for i, elem := range br.Elems[:2] {
 					val := elem.Lit()
-					if _, err := strconv.Atoi(val); err == nil {
-					} else if len(val) == 1 &&
-						(('a' <= val[0] && val[0] <= 'z') ||
-							('A' <= val[0] && val[0] <= 'Z')) {
+					// ParseInt with bit size 64 to ensure consistent behavior on 32-bit platforms.
+					if _, err := strconv.ParseInt(val, 10, 64); err == nil {
+					} else if len(val) == 1 && asciiLetter(val[0]) {
 						chars[i] = true
 					} else {
 						broken = true
@@ -120,9 +147,13 @@ func SplitBraces(word *Word) bool {
 				if len(br.Elems) == 3 {
 					// increment must be a number
 					val := br.Elems[2].Lit()
-					if _, err := strconv.Atoi(val); err != nil {
+					// ParseInt with bit size 64 to ensure consistent behavior on 32-bit platforms.
+					if _, err := strconv.ParseInt(val, 10, 64); err != nil {
 						broken = true
 					}
+				} else if len(br.Elems) > 3 {
+					// sequences like {1..2..3..4} are literal in bash
+					broken = true
 				}
 				// are start and end both chars or
 				// non-chars?
@@ -154,9 +185,6 @@ func SplitBraces(word *Word) bool {
 			left.Value = left.Value[last:]
 			addLit(&left)
 		}
-	}
-	if !toSplit {
-		return false
 	}
 	// open braces that were never closed fall back to non-braces
 	for acc != top {
