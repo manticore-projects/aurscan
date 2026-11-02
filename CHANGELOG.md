@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A documented capability grant no longer blocks the build as MALICIOUS.**
+  `network-monitor-bin` was flagged MALICIOUS at 90% because its install
+  scriptlet runs `setcap cap_bpf,cap_net_admin,cap_perfmon` on the package's
+  own eBPF network monitor — the documented install step of this package
+  class, and the model's only id for it was the critical
+  `privilege_persistence`. New warning-tier sibling `setcap_for_own_binary`:
+  setcap on the package's own binary for capabilities its stated purpose
+  plausibly requires now yields SUSPICIOUS ("review before building"), which
+  is the right posture for a system-wide grant to an unreviewed prebuilt
+  binary. `privilege_persistence` keeps setuid/setgid, caps on binaries the
+  package does not ship, and caps unrelated to the package's function; the
+  hedge resolver covers the pair, and both privilege siblings now resolve
+  independently (`siblingOf` holds multiple siblings per critical). The
+  auditor prompt also corrects the file-capability flag semantics the model
+  asserted: the `i` (inheritable) flag does not propagate caps to child
+  processes on its own (that needs the child's own file inheritable set or
+  ambient caps), so `=eip` where upstream documents `=ep` is a note, not an
+  escalation. Verdict-cache version bumped to v12.
+
 ## [0.9.2] - 2026-09-21
 
 ### Fixed

@@ -13,6 +13,7 @@ func TestBenignSiblingsExistForEveryOverreachingCritical(t *testing.T) {
 		{"unrelated_pkg_manager_exec", "pkg_manager_build_deps"},
 		{"privilege_persistence", "sudoers_for_own_service"},
 		{"privilege_persistence", "service_enabled_by_scriptlet"},
+		{"privilege_persistence", "setcap_for_own_binary"},
 	}
 	for _, p := range pairs {
 		c, ok := checkCatalog[p.critical]
@@ -41,6 +42,7 @@ func TestBenignSiblingsDoNotBlock(t *testing.T) {
 		"pkg_manager_build_deps",
 		"service_enabled_by_scriptlet",
 		"sudoers_for_own_service",
+		"setcap_for_own_binary",
 		"packaging_policy_violation",
 	} {
 		v := VerdictFromChecks([]Check{{ID: id, Triggered: true, File: "PKGBUILD", Evidence: "x"}})
@@ -68,6 +70,7 @@ func TestPromptDocumentsTheSiblings(t *testing.T) {
 		"pkg_manager_build_deps",
 		"service_enabled_by_scriptlet",
 		"sudoers_for_own_service",
+		"setcap_for_own_binary",
 		"packaging_policy_violation",
 		"belongs at\nwarning tier",
 	} {

@@ -71,7 +71,15 @@ var checkCatalog = map[string]checkDef{
 	// hook the package installs for itself that runs code", which a model
 	// reasonably stretched to cover `systemctl enable --now` in a post_install —
 	// a packaging-guideline violation, not privilege manipulation.
-	"privilege_persistence":     {"critical", "Grants or escalates privilege: setuid/setgid or setcap on a binary, a sudoers rule beyond what the package's own service account needs, or pkexec policy. NOT this: enabling a service, or a sudoers rule scoped to the package's own daemon"},
+	//
+	// Narrowed again for setcap (network-monitor-bin): a scriptlet granting its
+	// OWN binary the capabilities the software's documented function requires
+	// (CAP_BPF/CAP_NET_ADMIN/CAP_PERFMON on an eBPF network monitor, CAP_NET_RAW
+	// on a ping-like tool) is how such packages are packaged, not an escalation —
+	// see setcap_for_own_binary. What stays critical: setuid/setgid, caps on a
+	// binary the package does not ship, and caps with no plausible relation to
+	// the package's purpose (cap_setuid, cap_sys_admin, cap_dac_override).
+	"privilege_persistence":     {"critical", "Grants or escalates privilege: setuid/setgid on a binary, setcap granting capabilities unrelated to the package's documented function or on a binary the package does not ship, a sudoers rule beyond what the package's own service account needs, or pkexec policy. NOT this: enabling a service, a sudoers rule scoped to the package's own daemon, or setcap on the package's own binary for caps its stated purpose requires"},
 	"install_scriptlet_worm":    {"critical", "An install scriptlet that replicates itself: copies its own source, or uses the victim's AUR credentials to push to aur.archlinux.org"},
 	"scriptlet_system_takeover": {"critical", "An install scriptlet makes root-level system changes: drops a binary into a system bin directory, writes and enables a systemd unit, or invokes pacman"},
 	// Execution that happens to whoever OPENS the repository, before any build.
@@ -101,6 +109,14 @@ var checkCatalog = map[string]checkDef{
 	"pkg_manager_build_deps":       {"warning", "npm/cargo/pip/go fetching THIS project's own declared dependencies at build time. Normal for Electron/Node/Rust packages; worth noting because it pulls from the network outside source=(), but it is not the Atomic Arch signature"},
 	"service_enabled_by_scriptlet": {"warning", "An install scriptlet enables or starts a systemd service the package itself ships. Contrary to Arch packaging guidelines, which leave that to the user — a policy violation, not an attack"},
 	"sudoers_for_own_service":      {"warning", "A sudoers drop-in scoped to the package's own service account or daemon (a monitoring probe, a web service). Legitimate and common; report it so the user can judge the scope"},
+	// The benign sibling of privilege_persistence for file capabilities. Observed
+	// on network-monitor-bin: setcap cap_bpf,cap_net_admin,cap_perfmon on the
+	// package's own eBPF network monitor was reported critical => MALICIOUS at
+	// 90% on a package doing exactly what its pkgdesc says. The caps grant is the
+	// documented install step of this package class; the residual risk — a
+	// system-wide grant to a binary the scanner could not read — is real and is
+	// exactly what warning tier ("review before building") exists for.
+	"setcap_for_own_binary":        {"warning", "setcap on the package's own binary granting capabilities its documented function plausibly requires (CAP_BPF/CAP_NET_ADMIN/CAP_PERFMON on an eBPF monitor, CAP_NET_RAW on a ping-like tool). A standing grant to a binary that was not reviewed — worth the user's judgement, but how such software is packaged, not evidence of malice"},
 	"unpinned_upstream_installer":  {"warning", "Pipes THIS project's own installer into a shell (sh.rustup.rs for a Rust package, a vendor's script for that vendor's software). Dangerous — unpinned, unchecksummed, absent from source=(), and whatever the URL serves at build time is what runs — but not evidence of malice"},
 	"telemetry":                    {"warning", "Reports the install to the project's own upstream (an analytics endpoint, an install counter). Not exfiltration: no user data, no third party. Worth surfacing because the user did not ask for it"},
 	"insecure_tls_fetch":           {"warning", "Downloads with certificate verification disabled (curl -k/--insecure, wget --no-check-certificate), so the peer is unauthenticated. Worse when the checksum used to verify the download comes from the same host"},
@@ -191,6 +207,7 @@ var checkLabel = map[string]string{
 	"pkg_manager_build_deps":        "fetches its own deps unpinned",
 	"service_enabled_by_scriptlet":  "scriptlet enables a systemd service",
 	"sudoers_for_own_service":       "sudoers drop-in for its own service",
+	"setcap_for_own_binary":         "capabilities granted to its own binary",
 	"unpinned_upstream_installer":   "pipes its own vendor's installer into a shell",
 	"telemetry":                     "reports the install to its own upstream",
 	"insecure_tls_fetch":            "downloads with TLS verification disabled",
@@ -281,15 +298,17 @@ var severityRank = map[string]int{"info": 0, "warning": 1, "critical": 2}
 // OK. An unrecognised ID is recorded as info (no verdict impact) so a model that
 // invents an ID cannot silently escalate or de-escalate — the catch-all IDs
 // (other_critical/other_warning) are the sanctioned escape hatch.
-// siblingOf pairs a critical check with the warning that describes the same
+// siblingOf pairs a critical check with the warning(s) that describe the same
 // behaviour in its legitimate form. These are alternatives, not a scale: the
 // question "is this curl|sh from a host with a claim to the package?" has one
 // answer, and reporting both ids means the answer was not given.
-var siblingOf = map[string]string{
-	"pipe_to_shell":              "unpinned_upstream_installer",
-	"exfiltration":               "telemetry",
-	"privilege_persistence":      "sudoers_for_own_service",
-	"unrelated_pkg_manager_exec": "pkg_manager_build_deps",
+// privilege_persistence has two siblings because it covers two primitives with
+// distinct legitimate forms (a sudoers drop-in, a setcap grant).
+var siblingOf = map[string][]string{
+	"pipe_to_shell":              {"unpinned_upstream_installer"},
+	"exfiltration":               {"telemetry"},
+	"privilege_persistence":      {"sudoers_for_own_service", "setcap_for_own_binary"},
+	"unrelated_pkg_manager_exec": {"pkg_manager_build_deps"},
 }
 
 // resolveHedges drops a critical check when its benign sibling was reported for
@@ -315,9 +334,15 @@ func resolveHedges(checks []Check) []Check {
 	}
 	out := make([]Check, 0, len(checks))
 	for _, c := range checks {
-		if sib, ok := siblingOf[c.ID]; ok && c.Triggered &&
-			present[key{sib, c.File, c.Evidence}] {
-			continue // the model hedged; keep the specific claim
+		hedged := false
+		for _, sib := range siblingOf[c.ID] {
+			if c.Triggered && present[key{sib, c.File, c.Evidence}] {
+				hedged = true // the model hedged; keep the specific claim
+				break
+			}
+		}
+		if hedged {
+			continue
 		}
 		out = append(out, c)
 	}

@@ -60,14 +60,16 @@ func TestDifferentEvidenceIsNotAHedge(t *testing.T) {
 // a benign sibling in the catalog must appear in siblingOf, or the hedge goes
 // unresolved.
 func TestEverySiblingPairIsDeclared(t *testing.T) {
-	for crit, benign := range siblingOf {
+	for crit, benigns := range siblingOf {
 		c, ok := checkCatalog[crit]
 		if !ok || c.Severity != "critical" {
 			t.Errorf("%s should be a critical check", crit)
 		}
-		b, ok := checkCatalog[benign]
-		if !ok || b.Severity != "warning" {
-			t.Errorf("%s should be a warning check", benign)
+		for _, benign := range benigns {
+			b, ok := checkCatalog[benign]
+			if !ok || b.Severity != "warning" {
+				t.Errorf("%s should be a warning check", benign)
+			}
 		}
 	}
 	if !contains(Instructions, "ALTERNATIVES, not a scale") {

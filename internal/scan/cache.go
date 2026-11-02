@@ -34,7 +34,7 @@ import (
 // upgraded aurscan ignores entries written by an incompatible older one.
 // v2: Tier-2 checklist verdict derivation (discussion #56). The prompt and the
 // verdict policy changed, so v1 entries must not be replayed under v2 rules.
-const cacheVersion = "v11" // v11: content-aware editor rc (editor_rc_inert), makepkg artifacts section
+const cacheVersion = "v12" // v12: setcap_for_own_binary sibling; setcap narrowed in privilege_persistence
 
 // defaultCacheTTL bounds how long a stored verdict is served. The key already
 // captures package/prompt/instructions/model, so a shorter-lived opinion is not
