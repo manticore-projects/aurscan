@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-02
+
 ### Fixed
 - **A documented capability grant no longer blocks the build as MALICIOUS.**
   `network-monitor-bin` was flagged MALICIOUS at 90% because its install
@@ -1081,7 +1083,8 @@ confusion as a property of the package.
 - Makefile, installer with update/uninstall, AUR `PKGBUILD`, and CI that
   attaches UPX-packed release artifacts on tags.
 
-[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/manticore-projects/aurscan/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/manticore-projects/aurscan/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/manticore-projects/aurscan/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/manticore-projects/aurscan/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/manticore-projects/aurscan/compare/v0.8.5...v0.9.0
