@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,5 +64,20 @@ func TestCallOpenAIModelForwardedWhenEnvSet(t *testing.T) {
 	}
 	if model, ok := requestModel(t, <-bodyCh); !ok || model != want {
 		t.Fatalf("request model = %q ok=%v; want %q", model, ok, want)
+	}
+}
+
+func TestLastNKeepsCodexTailError(t *testing.T) {
+	// codex v0.160.1 prints a ~300-byte banner to stderr before the real
+	// failure; firstN hides the cause, lastN must keep it. The banner plus the
+	// echoed prompt/stdin easily exceed 300 bytes in a real scan.
+	banner := "Reading additional input from stdin...\nOpenAI Codex v0.160.1\n--------\nworkdir: /tmp\nmodel: gpt-5.6-luna\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: medium\nreasoning summaries: none\nsession id: abc\n--------\nuser\nSay hi\n\n<stdin>\n" + strings.Repeat("pkg-content\n", 40) + "</stdin>\n"
+	cause := "ERROR: You've hit your usage limit. Upgrade to Pro"
+	stderr := banner + cause
+	if got := firstN(stderr, 300); strings.Contains(got, "ERROR") {
+		t.Fatalf("firstN unexpectedly contains ERROR; test needs a longer banner: %q", got)
+	}
+	if got := lastN(stderr, 500); !strings.Contains(got, "ERROR") {
+		t.Fatalf("lastN dropped the tail error: %q", got)
 	}
 }

@@ -319,7 +319,7 @@ func callClaudeCLI(ctx context.Context, be Backend, instructions, content string
 		c.Stdout, c.Stderr = &out, &errb
 		if err := c.Run(); err != nil {
 			dbgBlock("claude stderr", errb.String())
-			return "", fmt.Errorf("claude CLI failed: %s", firstN(errb.String(), 300))
+			return "", fmt.Errorf("claude CLI failed: %s", lastN(errb.String(), 500))
 		}
 		dbgBlock("claude raw stdout", out.String())
 		return out.String(), nil
@@ -436,7 +436,8 @@ func callCodexCLI(ctx context.Context, be Backend, instructions, content string,
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
 	if err := c.Run(); err != nil {
-		return "", Usage{}, fmt.Errorf("codex CLI failed: %s", firstN(errb.String(), 300))
+		dbgBlock("codex stderr", errb.String())
+		return "", Usage{}, fmt.Errorf("codex CLI failed: %s", lastN(errb.String(), 500))
 	}
 	// The Codex CLI exposes neither token counts nor cost on stdout, so both
 	// are estimates. When the model is known (per-backend model= or
@@ -716,7 +717,7 @@ func callCmd(ctx context.Context, be Backend, instructions, content string, estI
 	c.Stdout, c.Stderr = &out, &errb
 	if err := c.Run(); err != nil {
 		dbgBlock("cmd stderr", errb.String())
-		return "", Usage{}, fmt.Errorf("backend %s failed: %s", cmd, firstN(errb.String(), 300))
+		return "", Usage{}, fmt.Errorf("backend %s failed: %s", cmd, lastN(errb.String(), 500))
 	}
 	dbgBlock("cmd raw stdout", out.String())
 	return out.String(), Usage{In: estIn, Out: estimateTokens(out.String()), Estimated: true}, nil
@@ -726,6 +727,19 @@ func firstN(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) > n {
 		return s[:n]
+	}
+	return s
+}
+
+// lastN returns the trailing n bytes of s (trimmed). CLI backends (codex,
+// claude, cmd) print a startup banner to stderr before the real failure, so
+// firstN hides the cause behind ~300 bytes of banner — codex v0.160.1 prints
+// "Reading additional input from stdin..." + version/workdir/model first and
+// the actual ERROR last. Tail keeps the actionable line.
+func lastN(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[len(s)-n:]
 	}
 	return s
 }
